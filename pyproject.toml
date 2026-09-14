@@ -1,6 +1,47 @@
-# Test configuration only, for now. There is no Python package yet: stage 0 is
-# the slate page and the written boundary with ProjectManager. The [project]
-# table arrives with ingest, once the package has a name.
+[project]
+name = "experimentkit"
+version = "0.1.0"
+description = "Capture at the bench: slate, ingest, sync and QC for experiment recordings."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+
+# An orchestrator: it pulls the strings and leaves the heavy lifting to the
+# libraries. See README.md, "Where it sits".
+dependencies = [
+    # The record: project paths, dataset sidecars, schema checks. Zero
+    # dependencies of its own.
+    "projectkit",
+
+    # Frame sources over video files and image sequences. Reading frames is
+    # heavy lifting, so it comes from here rather than being written again.
+    "markertracker",
+
+    # Decoding the slate's QR codes. Capped below 5 for the same reason
+    # markertracker is: OpenCV 5 removed APIs the calibration code relies on.
+    "opencv-python>=4.8,<5",
+    "numpy>=1.24",
+]
+
+[project.scripts]
+experimentkit = "experimentkit.__main__:main"
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.uv.sources]
+# Sibling repositories, resolved by relative path: every repo is cloned side by
+# side under one parent, and uv fails loudly if one is missing rather than
+# quietly installing something else.
+projectkit = { path = "../ProjectManager", editable = true }
+markertracker = { path = "../GUI-TrackAnything", editable = true }
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["experimentkit*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

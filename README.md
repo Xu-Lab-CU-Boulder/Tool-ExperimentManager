@@ -4,9 +4,102 @@ Capture at the bench: everything from "I'm about to record" to "the data is
 filed and checked". Source control for how data was collected, the tools to run
 a session, and the path from camera to project.
 
-**Status:** stage 0. The repository holds the [slate](slate/README.md), a
-one-file web page that puts the experiment id and take into the footage itself,
-and this document, which fixes the boundaries before any more code is written.
+**Status:** stage 1. The [slate](slate/README.md) puts the experiment id and
+take into the footage itself; `experimentkit ingest --dry-run` reads it back out
+and reports where every clip would be filed. Nothing is copied yet.
+
+---
+
+## Setup
+
+Clone beside the other repositories. `uv` resolves projectkit and markertracker
+from their sibling folders, so the layout is required:
+
+```
+GitHub/
+  ExperimentManager/
+  ProjectManager/        <- projectkit
+  GUI-TrackAnything/     <- markertracker
+```
+
+```bash
+cd ExperimentManager
+uv sync
+```
+
+## Ingest, stage 1: the dry run
+
+Run from inside a project repository (or pass `--project`), pointing at an SD
+card or a capture folder:
+
+```bash
+uv run --project ../ExperimentManager experimentkit ingest E:\ --dry-run
+```
+
+```
+  DCIM/100NIKON/DSC_0001.mp4
+      video, 1.2 GB, camera cam-left
+      slate  20260212_hooper1_vertical-swimming take03  (head, frame 12)
+      ->     3_experiments/raw/20260212_hooper1_vertical-swimming/take03/cam-left/DSC_0001.mp4
+
+  DCIM/100NIKON/DSC_0002.mp4
+      video, 800 MB, camera cam-left
+      UNSORTED  no slate found in the first or last 10 s
+
+2 clip(s): 1 would be filed, 0 already filed, 0 conflict, 1 unsorted.
+--dry-run: nothing was copied.
+```
+
+For each clip it decides:
+
+- **Which experiment and take**, from the slate. Only the first and last 10 s
+  are searched (`--seconds` to change it), so a tail slate held up before
+  stopping works too.
+- **Which camera**, from a `CAMERA.txt` label (below), or `--camera NAME` for a
+  whole card.
+- **Where it would go**, from projectkit: the dataset's stage folder, then the
+  take, then the camera, with the original filename untouched.
+
+And it **never guesses**. Each clip ends in one of four states:
+
+| State | Meaning |
+|---|---|
+| would be filed | One experiment and take, a dataset that exists, a free destination |
+| already filed | The same file (by size, for now) is already at the destination |
+| conflict | Something different is already there, or two clips would land on one path |
+| unsorted | No slate, codes that disagree, an experiment the project lacks, or an unreadable clip, with the reason given |
+
+The exit code is 0 when every clip would be filed or already is, and 1
+otherwise, so it works in a script. `--json` prints the same facts as one object.
+
+**Running without `--dry-run` refuses.** Copying arrives in stage 2 and will act
+only on clips the dry run calls certain.
+
+### Labelling cameras
+
+Put a file named `CAMERA.txt` containing one name (`cam-left`, `triton-1`) at
+the top of each SD card, or in each camera's capture folder. Do it once: it stays
+true for as long as that card lives in that camera. A clip takes the label of
+the nearest `CAMERA.txt` above it.
+
+Without labels, clips are grouped by the folder they came from and named
+`unknown-1`, `unknown-2`. That keeps two identical GoPros from overwriting each
+other, but the names mean nothing later, so label the cards.
+
+### What counts as a clip
+
+A video file (`.mp4`, `.mov`, `.mkv`, `.avi`, …), or a folder of two or more
+images, which is how GigE capture software such as the Tritons' usually writes.
+A folder of images is one clip. Anything else is listed as ignored rather than
+silently skipped.
+
+### Under the hood
+
+Frames come from markertracker's frame sources, so a video and an image folder
+are read the same way. The slate's QR codes are decoded with two OpenCV
+detectors, since one alone misses valid codes. A window stops being searched two
+seconds after the slate is put down. `tests/test_page_to_ingest.py` runs codes
+drawn by the slate page's own encoder through ingest end to end.
 
 ---
 
@@ -113,8 +206,8 @@ science.
 
 | Stage | Delivers |
 |---|---|
-| 0 | This repo, the slate, the boundary and interface written down |
-| 1 | `ingest --dry-run`: reports where each clip would be filed, copies nothing |
+| 0 | **Done.** This repo, the slate, the boundary and interface written down |
+| 1 | **Done.** `ingest --dry-run`: reports where each clip would be filed, copies nothing |
 | 2 | Real ingest: copy, verify hashes, write the capture block |
 | 3 | Session QC: every take decoded, every camera present, sync found at both ends, constant frame rate |
 | 4 | Rig configs: which cameras a setup uses, their labels, how they sync |
@@ -138,7 +231,9 @@ proven themselves.
 ## Running the tests
 
 ```bash
-pytest
+uv run pytest
 ```
 
-`tests/test_slate.py` needs Node and OpenCV and skips without them.
+The ingest tests build fake cameras: short MP4s and folders of PNGs with slate
+codes drawn into chosen frames, so no hardware is needed. `tests/test_slate.py`
+and `tests/test_page_to_ingest.py` also need Node, and skip without it.
