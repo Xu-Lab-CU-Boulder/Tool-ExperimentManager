@@ -63,19 +63,25 @@ projectkit as a library, and the dependency only ever points one way.
    automatically.
 2. **Sidecars are created through projectkit** (`Dataset.create()`, `save()`),
    so ExperimentManager cannot write one projectkit does not recognise.
-3. **Capture details live in their own block** of the sidecar, such as
-   `"capture": {takes, cameras, sync points}`. projectkit keeps the block and
+3. **Capture details live in their own top-level block** of the sidecar, such
+   as `"capture": {takes, cameras, sync points}`. projectkit keeps the block and
    does not interpret it.
-4. **After filing, projectkit verifies.** Ingest ends with projectkit's `scan`
+4. **Never write inside `files`.** projectkit's `scan` rebuilds that block from
+   disk and replaces it whole, so per-file tags (which take, which camera) would
+   vanish on the next rescan. Key them by file name inside `capture` instead.
+5. **Check the schema before writing.** `require_supported_schema()` raises if
+   the sidecar is a newer major format than the installed projectkit
+   understands.
+6. **After filing, projectkit verifies.** Ingest ends with projectkit's `scan`
    and `check`, the same integrity checks you would run by hand.
-5. **Git stays the user's.** ExperimentManager writes files and never commits.
+7. **Git stays the user's.** ExperimentManager writes files and never commits.
 
-Two things must exist in projectkit before ingest relies on this contract:
-
-- a **test that unknown sidecar blocks survive** `dataset edit` and `scan`
-  untouched, because a silent drop would lose capture data without any error;
-- a **schema version** in the sidecar, which ExperimentManager checks, refusing
-  a newer schema than it understands.
+projectkit guarantees its side of this, and `tests/test_sidecar_contract.py` in
+ProjectManager pins it: every key it does not recognise survives `save`,
+`dataset edit` and `dataset scan`; `dataset check` never writes; a newer major
+schema is refused and left untouched; a newer minor is rewritten without being
+downgraded. The tests were checked against deliberately broken copies of
+projectkit, so they fail if the guarantee breaks.
 
 For anything that is not Python, projectkit's read-only commands also answer in
 JSON (`projectkit doctor --json`).
