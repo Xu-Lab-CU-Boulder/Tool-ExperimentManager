@@ -1,0 +1,6 @@
+# Test configuration only, for now. There is no Python package yet: stage 0 is
+# the slate page and the written boundary with ProjectManager. The [project]
+# table arrives with ingest, once the package has a name.
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

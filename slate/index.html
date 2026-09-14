@@ -1,0 +1,783 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#ffffff">
+<title>Slate</title>
+<!--
+  Slate: a clapperboard for experiment video.
+
+  Hold this in front of every camera when a take starts. The QR code says which
+  experiment and take the footage belongs to, so the video carries its own
+  identity -- it survives renamed files, a mixed-up SD card and a copy to the
+  wrong folder. Sync mode flips a large bar between black and white, numbering
+  every flip in the QR, so footage from different cameras can be lined up to
+  the frame.
+
+  One file. No server, no downloads, nothing stored, nothing sent: everything
+  comes from the URL fragment (#id=...&take=...), which a browser never sends
+  to any server. Works offline once loaded.
+
+  What the QR codes contain -- a pointer, never the conditions:
+
+    slate   pk1:<experiment-id>:take03
+    sync    pk1:<experiment-id>:take03:sync:0007
+
+  `pk1` marks a code this page made (and versions the format), so a decoder
+  can ignore any other QR code that happens to be in the scene. The conditions
+  stay in the dataset sidecar, where they can still be corrected later.
+
+  Sync rule: flip k shows counter k. The bar is BLACK when k is even and WHITE
+  when k is odd. The QR itself is always dark-on-white, because many decoders
+  (OpenCV's among them) cannot read an inverted code.
+
+  Deliberately always white, whatever the phone's theme: a dark page would
+  make the QR code unreadable.
+-->
+<style>
+  :root {
+    --ink: #000;
+    --paper: #fff;
+    --muted: #555;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%;
+    background: var(--paper); color: var(--ink);
+    font-family: var(--sans);
+    overflow: hidden;
+    -webkit-user-select: none; user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  button, input, select { font: inherit; color: inherit; }
+
+  /* ---------------------------------------------------------------- setup */
+  #setup {
+    height: 100dvh; overflow: auto;
+    display: grid; place-items: center;
+    padding: 24px;
+    -webkit-user-select: text; user-select: text;
+  }
+  #setup form { width: min(100%, 460px); display: grid; gap: 16px; }
+  #setup h1 { margin: 0; font-size: 28px; }
+  #setup p { margin: 0; color: var(--muted); line-height: 1.45; }
+  #setup label { display: grid; gap: 6px; font-weight: 600; }
+  #setup label span { font-weight: 400; color: var(--muted); font-size: 14px; }
+  #setup input, #setup select {
+    width: 100%; padding: 12px; font-size: 18px;
+    border: 2px solid var(--ink); border-radius: 8px; background: var(--paper);
+  }
+  #setup input#f-id { font-family: var(--mono); }
+  #setup .error { color: #b00020; font-size: 14px; min-height: 1.2em; }
+  .primary {
+    padding: 14px; font-size: 20px; font-weight: 700;
+    background: var(--ink); color: var(--paper);
+    border: 0; border-radius: 8px; cursor: pointer;
+  }
+
+  /* ---------------------------------------------------------------- slate */
+  #slate {
+    height: 100dvh;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto auto;
+    grid-template-areas: "bar" "qr" "text" "sync";
+  }
+  #controls {
+    grid-area: bar;
+    display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+    padding: 6px 8px;
+    padding-top: max(6px, env(safe-area-inset-top));
+    border-bottom: 1px solid #ddd;
+  }
+  #controls button {
+    padding: 8px 12px; font-size: 15px;
+    background: var(--paper); border: 1.5px solid var(--ink); border-radius: 6px;
+    cursor: pointer;
+  }
+  #controls button.on { background: var(--ink); color: var(--paper); }
+  #controls .spacer { flex: 1; }
+  #controls .diag { font-size: 12px; color: var(--muted); font-family: var(--mono); }
+
+  #qr-wrap {
+    grid-area: qr;
+    display: grid; place-items: center;
+    min-height: 0; padding: 8px;
+  }
+  #qr { image-rendering: pixelated; image-rendering: crisp-edges; display: block; }
+
+  #text {
+    grid-area: text;
+    padding: 4px 12px 10px;
+    text-align: center;
+    line-height: 1.1;
+  }
+  #t-id {
+    font-family: var(--mono); font-weight: 700;
+    font-size: clamp(16px, 4.6vw, 40px);
+    overflow-wrap: anywhere;
+  }
+  #t-take {
+    font-family: var(--mono); font-weight: 800;
+    font-size: clamp(34px, 11vw, 96px);
+    letter-spacing: 0.02em;
+  }
+  #t-note { font-size: clamp(16px, 4.2vw, 34px); color: #222; overflow-wrap: anywhere; }
+  #t-clock { font-family: var(--mono); font-size: clamp(14px, 3.4vw, 26px); color: var(--muted); }
+
+  #sync {
+    grid-area: sync;
+    height: 22dvh;
+    background: var(--ink);
+    display: none;
+    border-top: 4px solid #888;   /* marks the bar's edge even when it is white */
+  }
+  #t-sync {
+    display: none;
+    font-family: var(--mono); font-weight: 700;
+    font-size: clamp(22px, 7vw, 60px);
+  }
+  body.syncing #sync, body.syncing #t-sync { display: block; }
+  body.syncing #t-note, body.syncing #t-clock { display: none; }
+
+  /* Landscape: QR on the left, words and sync bar on the right. */
+  @media (orientation: landscape) {
+    #slate {
+      grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+      grid-template-rows: auto minmax(0, 1fr) auto;
+      grid-template-areas: "bar bar" "qr text" "qr sync";
+    }
+    #text { align-self: center; }
+    #t-id { font-size: clamp(16px, 2.6vw, 40px); }
+    #t-take { font-size: clamp(34px, 7vw, 110px); }
+    #t-note { font-size: clamp(16px, 2.4vw, 34px); }
+    #sync { height: auto; min-height: 30dvh; }
+  }
+
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+
+<!-- ------------------------------------------------------------------ setup -->
+<section id="setup" hidden>
+  <form id="setup-form" autocomplete="off">
+    <h1>Slate</h1>
+    <p>Show this to every camera when a take starts. The QR code carries the
+       experiment id and take, never the conditions. Those stay in the dataset
+       sidecar.</p>
+
+    <label>Experiment id
+      <input id="f-id" name="id" required spellcheck="false" autocapitalize="off"
+             placeholder="20260212_hooper1_vertical-swimming">
+      <span>Same id as the dataset: YYYYMMDD_subject_measurement</span>
+    </label>
+
+    <label>Take
+      <input id="f-take" name="take" type="number" min="1" max="999" value="1" inputmode="numeric">
+    </label>
+
+    <label>Note <span>(optional, shown large, not in the QR)</span>
+      <input id="f-note" name="note" maxlength="80" placeholder="18 °C, still water">
+    </label>
+
+    <label>Sync flip every
+      <select id="f-period" name="period">
+        <option value="500">0.5 s</option>
+        <option value="1000" selected>1 s</option>
+        <option value="2000">2 s</option>
+      </select>
+    </label>
+
+    <div class="error" id="setup-error"></div>
+    <button class="primary" type="submit">Show slate</button>
+  </form>
+</section>
+
+<!-- ------------------------------------------------------------------ slate -->
+<section id="slate" hidden>
+  <div id="controls">
+    <button id="b-prev" type="button" aria-label="Previous take">&minus; take</button>
+    <button id="b-next" type="button" aria-label="Next take">take +</button>
+    <button id="b-sync" type="button">Sync</button>
+    <button id="b-full" type="button">Full screen</button>
+    <button id="b-edit" type="button">Edit</button>
+    <span class="spacer"></span>
+    <span class="diag" id="diag"></span>
+  </div>
+  <div id="qr-wrap"><canvas id="qr" role="img" aria-label="QR code"></canvas></div>
+  <div id="text">
+    <div id="t-id"></div>
+    <div id="t-take"></div>
+    <div id="t-sync"></div>
+    <div id="t-note"></div>
+    <div id="t-clock"></div>
+  </div>
+  <div id="sync" aria-label="Sync bar"></div>
+</section>
+
+<script>
+/* qr-encoder:begin ------------------------------------------------------------
+ * A small QR Code encoder: byte mode, versions 1-10, all four error correction
+ * levels. Written for this page so it has no dependencies; checked by
+ * ProjectManager/tests/test_slate.py, which decodes its output with OpenCV.
+ * Follows ISO/IEC 18004. Version 10 in byte mode holds 213 bytes at level M --
+ * far more than a slate payload, which is under 80.
+ */
+const QR = (() => {
+  // [ec codewords per block, blocks in group 1, data codewords each, (group 2)]
+  const BLOCKS = {
+    L: [[7,1,19],[10,1,34],[15,1,55],[20,1,80],[26,1,108],[18,2,68],[20,2,78],
+        [24,2,97],[30,2,116],[18,2,68,2,69]],
+    M: [[10,1,16],[16,1,28],[26,1,44],[18,2,32],[24,2,43],[16,4,27],[18,4,31],
+        [22,2,38,2,39],[22,3,36,2,37],[26,4,43,1,44]],
+    Q: [[13,1,13],[22,1,22],[18,2,17],[26,2,24],[18,2,15,2,16],[24,4,19],
+        [18,2,14,4,15],[22,4,18,2,19],[20,4,16,4,17],[24,6,19,2,20]],
+    H: [[17,1,9],[28,1,16],[22,2,13],[16,4,9],[22,2,11,2,12],[28,4,15],
+        [26,4,13,1,14],[26,4,14,2,15],[24,4,12,4,13],[28,6,15,2,16]],
+  };
+  const ALIGN = [[], [6,18], [6,22], [6,26], [6,30], [6,34], [6,22,38],
+                 [6,24,42], [6,26,46], [6,28,50]];
+  const FORMAT_BITS = { L: 1, M: 0, Q: 3, H: 2 };
+  const MAX_VERSION = 10;
+
+  function dataCodewords(version, ecl) {
+    const b = BLOCKS[ecl][version - 1];
+    return b[1] * b[2] + (b[3] || 0) * (b[4] || 0);
+  }
+
+  // -- Reed-Solomon over GF(2^8), polynomial 0x11D --------------------------
+  function gfMul(x, y) {
+    let z = 0;
+    for (let i = 7; i >= 0; i--) {
+      z = (z << 1) ^ ((z >>> 7) * 0x11D);
+      z ^= ((y >>> i) & 1) * x;
+    }
+    return z;
+  }
+  function rsDivisor(degree) {
+    const result = new Array(degree).fill(0);
+    result[degree - 1] = 1;
+    let root = 1;
+    for (let i = 0; i < degree; i++) {
+      for (let j = 0; j < degree; j++) {
+        result[j] = gfMul(result[j], root);
+        if (j + 1 < degree) result[j] ^= result[j + 1];
+      }
+      root = gfMul(root, 0x02);
+    }
+    return result;
+  }
+  function rsRemainder(data, divisor) {
+    const result = divisor.map(() => 0);
+    for (const b of data) {
+      const factor = b ^ result.shift();
+      result.push(0);
+      divisor.forEach((coef, i) => { result[i] ^= gfMul(coef, factor); });
+    }
+    return result;
+  }
+
+  // -- data bits -> codewords with error correction, interleaved ------------
+  function buildCodewords(bytes, version, ecl) {
+    const capacity = dataCodewords(version, ecl) * 8;
+    const bits = [];
+    const push = (value, length) => {
+      for (let i = length - 1; i >= 0; i--) bits.push((value >>> i) & 1);
+    };
+    push(0b0100, 4);                                  // byte mode
+    push(bytes.length, version <= 9 ? 8 : 16);        // character count
+    for (const b of bytes) push(b, 8);
+    push(0, Math.min(4, capacity - bits.length));     // terminator
+    push(0, (8 - bits.length % 8) % 8);               // to a byte boundary
+    for (let pad = 0xEC; bits.length < capacity; pad ^= 0xEC ^ 0x11) push(pad, 8);
+
+    const data = [];
+    for (let i = 0; i < bits.length; i += 8) {
+      let byte = 0;
+      for (let j = 0; j < 8; j++) byte = (byte << 1) | bits[i + j];
+      data.push(byte);
+    }
+
+    const [ec, n1, d1, n2 = 0, d2 = 0] = BLOCKS[ecl][version - 1];
+    const divisor = rsDivisor(ec);
+    const blocks = [];
+    let offset = 0;
+    for (const [count, size] of [[n1, d1], [n2, d2]]) {
+      for (let i = 0; i < count; i++) {
+        const block = data.slice(offset, offset + size);
+        offset += size;
+        blocks.push({ data: block, ec: rsRemainder(block, divisor) });
+      }
+    }
+
+    const out = [];
+    const longest = Math.max(d1, d2);
+    for (let i = 0; i < longest; i++)
+      for (const block of blocks) if (i < block.data.length) out.push(block.data[i]);
+    for (let i = 0; i < ec; i++)
+      for (const block of blocks) out.push(block.ec[i]);
+    return out;
+  }
+
+  // -- the symbol ----------------------------------------------------------
+  function encode(text, ecl = "M") {
+    if (!BLOCKS[ecl]) throw new Error("error correction level must be L, M, Q or H");
+    const bytes = Array.from(new TextEncoder().encode(text));
+
+    let version = 1;
+    for (; version <= MAX_VERSION; version++) {
+      const needed = 4 + (version <= 9 ? 8 : 16) + 8 * bytes.length;
+      if (needed <= dataCodewords(version, ecl) * 8) break;
+    }
+    if (version > MAX_VERSION) throw new Error("text too long for a slate QR code");
+
+    const size = version * 4 + 17;
+    const modules = Array.from({ length: size }, () => new Array(size).fill(false));
+    const isFunction = Array.from({ length: size }, () => new Array(size).fill(false));
+    const setFunction = (x, y, dark) => { modules[y][x] = dark; isFunction[y][x] = true; };
+    const bit = (value, i) => ((value >>> i) & 1) !== 0;
+
+    // timing patterns
+    for (let i = 0; i < size; i++) {
+      setFunction(6, i, i % 2 === 0);
+      setFunction(i, 6, i % 2 === 0);
+    }
+    // finder patterns, with their separators
+    for (const [cx, cy] of [[3, 3], [size - 4, 3], [3, size - 4]]) {
+      for (let dy = -4; dy <= 4; dy++) {
+        for (let dx = -4; dx <= 4; dx++) {
+          const x = cx + dx, y = cy + dy;
+          if (x < 0 || x >= size || y < 0 || y >= size) continue;
+          const dist = Math.max(Math.abs(dx), Math.abs(dy));
+          setFunction(x, y, dist !== 2 && dist !== 4);
+        }
+      }
+    }
+    // alignment patterns
+    const positions = ALIGN[version - 1];
+    const count = positions.length;
+    for (let i = 0; i < count; i++) {
+      for (let j = 0; j < count; j++) {
+        if ((i === 0 && j === 0) || (i === 0 && j === count - 1) ||
+            (i === count - 1 && j === 0)) continue;
+        for (let dy = -2; dy <= 2; dy++)
+          for (let dx = -2; dx <= 2; dx++)
+            setFunction(positions[i] + dx, positions[j] + dy,
+                        Math.max(Math.abs(dx), Math.abs(dy)) !== 1);
+      }
+    }
+
+    const drawFormat = (mask) => {
+      const data = (FORMAT_BITS[ecl] << 3) | mask;
+      let rem = data;
+      for (let i = 0; i < 10; i++) rem = (rem << 1) ^ ((rem >>> 9) * 0x537);
+      const bits = ((data << 10) | rem) ^ 0x5412;
+      for (let i = 0; i <= 5; i++) setFunction(8, i, bit(bits, i));
+      setFunction(8, 7, bit(bits, 6));
+      setFunction(8, 8, bit(bits, 7));
+      setFunction(7, 8, bit(bits, 8));
+      for (let i = 9; i < 15; i++) setFunction(14 - i, 8, bit(bits, i));
+      for (let i = 0; i < 8; i++) setFunction(size - 1 - i, 8, bit(bits, i));
+      for (let i = 8; i < 15; i++) setFunction(8, size - 15 + i, bit(bits, i));
+      setFunction(8, size - 8, true);                  // the always-dark module
+    };
+    drawFormat(0);                                     // reserve; redrawn below
+
+    if (version >= 7) {
+      let rem = version;
+      for (let i = 0; i < 12; i++) rem = (rem << 1) ^ ((rem >>> 11) * 0x1F25);
+      const bits = (version << 12) | rem;
+      for (let i = 0; i < 18; i++) {
+        const a = size - 11 + (i % 3), b = Math.floor(i / 3);
+        setFunction(a, b, bit(bits, i));
+        setFunction(b, a, bit(bits, i));
+      }
+    }
+
+    // codewords, in the zigzag
+    const codewords = buildCodewords(bytes, version, ecl);
+    let index = 0;
+    for (let right = size - 1; right >= 1; right -= 2) {
+      if (right === 6) right = 5;
+      for (let vert = 0; vert < size; vert++) {
+        for (let j = 0; j < 2; j++) {
+          const x = right - j;
+          const upward = ((right + 1) & 2) === 0;
+          const y = upward ? size - 1 - vert : vert;
+          if (!isFunction[y][x] && index < codewords.length * 8) {
+            modules[y][x] = bit(codewords[index >>> 3], 7 - (index & 7));
+            index++;
+          }
+        }
+      }
+    }
+
+    const MASKS = [
+      (x, y) => (x + y) % 2 === 0,
+      (x, y) => y % 2 === 0,
+      (x, y) => x % 3 === 0,
+      (x, y) => (x + y) % 3 === 0,
+      (x, y) => (Math.floor(x / 3) + Math.floor(y / 2)) % 2 === 0,
+      (x, y) => (x * y) % 2 + (x * y) % 3 === 0,
+      (x, y) => ((x * y) % 2 + (x * y) % 3) % 2 === 0,
+      (x, y) => ((x + y) % 2 + (x * y) % 3) % 2 === 0,
+    ];
+    const applyMask = (mask) => {
+      for (let y = 0; y < size; y++)
+        for (let x = 0; x < size; x++)
+          if (!isFunction[y][x] && MASKS[mask](x, y)) modules[y][x] = !modules[y][x];
+    };
+
+    // The standard's penalty score, used only to pick the most readable mask.
+    const penalty = () => {
+      let score = 0;
+      const lines = [];
+      for (let i = 0; i < size; i++) {
+        lines.push(modules[i]);
+        lines.push(modules.map((row) => row[i]));
+      }
+      const finderLike = [
+        [true, false, true, true, true, false, true, false, false, false, false],
+        [false, false, false, false, true, false, true, true, true, false, true],
+      ];
+      for (const line of lines) {
+        let run = 1;
+        for (let i = 1; i <= size; i++) {
+          if (i < size && line[i] === line[i - 1]) { run++; continue; }
+          if (run >= 5) score += 3 + (run - 5);
+          run = 1;
+        }
+        for (let i = 0; i + 11 <= size; i++)
+          for (const pattern of finderLike)
+            if (pattern.every((v, k) => line[i + k] === v)) score += 40;
+      }
+      let dark = 0;
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          if (modules[y][x]) dark++;
+          if (x < size - 1 && y < size - 1) {
+            const c = modules[y][x];
+            if (c === modules[y][x + 1] && c === modules[y + 1][x] &&
+                c === modules[y + 1][x + 1]) score += 3;
+          }
+        }
+      }
+      score += 10 * Math.floor(Math.abs(dark * 20 - size * size * 10) / (size * size));
+      return score;
+    };
+
+    let best = 0, bestScore = Infinity;
+    for (let mask = 0; mask < 8; mask++) {
+      applyMask(mask);
+      drawFormat(mask);
+      const score = penalty();
+      if (score < bestScore) { best = mask; bestScore = score; }
+      applyMask(mask);                                 // XOR again to undo
+    }
+    applyMask(best);
+    drawFormat(best);
+
+    return { version, size, modules };
+  }
+
+  return { encode };
+})();
+/* qr-encoder:end ------------------------------------------------------------ */
+</script>
+
+<script>
+(() => {
+  "use strict";
+
+  // Same rule as projectkit's dataset ids, so a slate can only name an id a
+  // sidecar could have. Also keeps ':' out, which the payload uses as a separator.
+  const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+  const QUIET_ZONE = 4;          // modules of white around the code, per the standard
+
+  const $ = (id) => document.getElementById(id);
+  const state = { id: "", take: 1, note: "", period: 1000 };
+
+  // -- the URL fragment is the only storage ----------------------------------
+  function readFragment() {
+    const params = new URLSearchParams(location.hash.slice(1));
+    const take = parseInt(params.get("take") || "1", 10);
+    const period = parseInt(params.get("period") || "1000", 10);
+    return {
+      id: (params.get("id") || "").trim(),
+      take: Number.isFinite(take) && take >= 1 && take <= 999 ? take : 1,
+      note: (params.get("note") || "").slice(0, 80),
+      period: [500, 1000, 2000].includes(period) ? period : 1000,
+    };
+  }
+  function writeFragment() {
+    const params = new URLSearchParams();
+    params.set("id", state.id);
+    params.set("take", String(state.take));
+    if (state.note) params.set("note", state.note);
+    if (state.period !== 1000) params.set("period", String(state.period));
+    history.replaceState(null, "", "#" + params.toString());
+  }
+  function validId(id) {
+    return SAFE_ID.test(id) && !id.includes("..");
+  }
+
+  const takeLabel = (take) => "take" + String(take).padStart(2, "0");
+  const slatePayload = () => `pk1:${state.id}:${takeLabel(state.take)}`;
+  const syncPayload = (k) => `${slatePayload()}:sync:${String(k).padStart(4, "0")}`;
+
+  // -- drawing the QR code ---------------------------------------------------
+  const canvas = $("qr");
+  const ctx = canvas.getContext("2d");
+
+  function drawQR(target, text, pixels) {
+    const { size, modules } = QR.encode(text, "M");
+    const total = size + 2 * QUIET_ZONE;
+    // Whole pixels per module: a fractional scale smears module edges, and a
+    // smeared edge is what makes a code hard to read from across a room.
+    const scale = Math.max(1, Math.floor(pixels / total));
+    const side = scale * total;
+    if (target.width !== side) { target.width = side; target.height = side; }
+    const c = target.getContext("2d");
+    c.fillStyle = "#fff";
+    c.fillRect(0, 0, side, side);
+    c.fillStyle = "#000";
+    for (let y = 0; y < size; y++)
+      for (let x = 0; x < size; x++)
+        if (modules[y][x])
+          c.fillRect((x + QUIET_ZONE) * scale, (y + QUIET_ZONE) * scale, scale, scale);
+  }
+
+  function qrPixels() {
+    const box = $("qr-wrap").getBoundingClientRect();
+    const cssSide = Math.max(80, Math.min(box.width, box.height) - 16);
+    const dpr = window.devicePixelRatio || 1;
+    return { css: cssSide, device: Math.floor(cssSide * dpr) };
+  }
+
+  // Display the canvas at exactly its drawn size, one canvas pixel per screen
+  // pixel. Stretching it to fill the space would scale by a fraction and blur
+  // the module edges the whole-pixel drawing was careful to keep sharp.
+  function fitCanvas() {
+    const dpr = window.devicePixelRatio || 1;
+    canvas.style.width = canvas.width / dpr + "px";
+    canvas.style.height = canvas.height / dpr + "px";
+  }
+
+  function renderSlate() {
+    $("t-id").textContent = state.id;
+    $("t-take").textContent = "TAKE " + String(state.take).padStart(2, "0");
+    $("t-note").textContent = state.note;
+    if (!sync.running) { drawQR(canvas, slatePayload(), qrPixels().device); fitCanvas(); }
+    document.title = `Slate · ${state.id} · take ${state.take}`;
+  }
+
+  // -- sync ------------------------------------------------------------------
+  // Every flip happens inside one requestAnimationFrame callback: the bar and
+  // the QR change on the same screen refresh. setTimeout alone can land tens
+  // of milliseconds late, which would eat the precision this is for.
+  const sync = {
+    running: false, k: 0, next: 0, raf: 0,
+    staged: document.createElement("canvas"),   // the next QR, drawn ahead of time
+    lastFrame: 0, frameMs: [],
+  };
+
+  function stageFlip(k) {
+    drawQR(sync.staged, syncPayload(k), qrPixels().device);
+  }
+
+  function applyFlip(k) {
+    $("sync").style.background = k % 2 === 0 ? "#000" : "#fff";
+    if (canvas.width !== sync.staged.width) {
+      canvas.width = sync.staged.width;
+      canvas.height = sync.staged.height;
+      fitCanvas();
+    }
+    ctx.drawImage(sync.staged, 0, 0);
+    $("t-sync").textContent = "SYNC " + String(k).padStart(4, "0");
+  }
+
+  // One frame's worth of sync logic, separate from the animation loop so it
+  // can be exercised with chosen timestamps. Returns the flip shown, or -1.
+  function step(now) {
+    if (!sync.running) return -1;
+    if (sync.lastFrame) {
+      sync.frameMs.push(now - sync.lastFrame);
+      if (sync.frameMs.length > 120) sync.frameMs.shift();
+    }
+    sync.lastFrame = now;
+
+    if (now < sync.next) return -1;
+    const shown = sync.k;
+    applyFlip(shown);
+    sync.k += 1;
+    // Keep to the schedule, but never fire a burst of flips after a stall
+    // (a notification, a slow frame): skip ahead instead.
+    sync.next += state.period;
+    if (now - sync.next > state.period) sync.next = now + state.period;
+    stageFlip(sync.k);
+    return shown;
+  }
+
+  function syncFrame(now) {
+    if (!sync.running) return;
+    step(now);
+    sync.raf = requestAnimationFrame(syncFrame);
+  }
+
+  function startSync() {
+    sync.running = true;
+    sync.interrupted = false;
+    sync.k = 0;
+    sync.lastFrame = 0;
+    sync.frameMs = [];
+    document.body.classList.add("syncing");
+    $("b-sync").classList.add("on");
+    $("b-sync").textContent = "Stop sync";
+    stageFlip(0);
+    sync.next = performance.now();
+    sync.raf = requestAnimationFrame(syncFrame);
+  }
+
+  function stopSync() {
+    sync.running = false;
+    cancelAnimationFrame(sync.raf);
+    document.body.classList.remove("syncing");
+    $("b-sync").classList.remove("on");
+    $("b-sync").textContent = "Sync";
+    renderSlate();
+  }
+
+  // -- keeping the screen on, and the display rate ---------------------------
+  let wakeLock = null;
+  async function keepAwake() {
+    if (!("wakeLock" in navigator)) return false;
+    try {
+      if (!wakeLock) {
+        wakeLock = await navigator.wakeLock.request("screen");
+        wakeLock.addEventListener("release", () => { wakeLock = null; showDiag(); });
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  // A hidden page gets no animation frames, so flipping silently stops when
+  // the phone locks or you switch apps -- and footage without sync is only
+  // discovered at analysis time. Stop sync outright instead, so coming back
+  // shows the plain slate and restarting sync is a deliberate act.
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden" && sync.running) {
+      stopSync();
+      $("diag").textContent = "sync stopped: page was hidden";
+      sync.interrupted = true;
+    }
+    if (document.visibilityState === "visible" && !$("slate").hidden) keepAwake().then(showDiag);
+  });
+
+  function showDiag() {
+    const parts = [];
+    if (sync.interrupted) parts.push("SYNC WAS INTERRUPTED");
+    if (sync.frameMs.length > 10) {
+      const sorted = [...sync.frameMs].sort((a, b) => a - b);
+      const median = sorted[Math.floor(sorted.length / 2)];
+      parts.push(`display ~${Math.round(1000 / median)} Hz`);
+    }
+    parts.push(wakeLock ? "screen kept on" : "screen may sleep");
+    $("diag").textContent = parts.join(" · ");
+  }
+  setInterval(() => {
+    const now = new Date();
+    $("t-clock").textContent = now.toLocaleTimeString([], { hour12: false });
+    if (!$("slate").hidden) showDiag();
+  }, 250);
+
+  // -- screens ---------------------------------------------------------------
+  function showSetup(message = "") {
+    if (sync.running) stopSync();
+    $("slate").hidden = true;
+    $("setup").hidden = false;
+    $("f-id").value = state.id;
+    $("f-take").value = String(state.take);
+    $("f-note").value = state.note;
+    $("f-period").value = String(state.period);
+    $("setup-error").textContent = message;
+  }
+
+  function showSlate() {
+    $("setup").hidden = true;
+    $("slate").hidden = false;
+    writeFragment();
+    renderSlate();
+    keepAwake().then(showDiag);
+  }
+
+  $("setup-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const id = $("f-id").value.trim();
+    if (!validId(id)) {
+      $("setup-error").textContent =
+        "Use the dataset id: letters, digits, dots, hyphens and underscores, " +
+        "starting with a letter or digit.";
+      return;
+    }
+    state.id = id;
+    state.take = Math.min(999, Math.max(1, parseInt($("f-take").value, 10) || 1));
+    state.note = $("f-note").value.trim().slice(0, 80);
+    state.period = parseInt($("f-period").value, 10) || 1000;
+    showSlate();
+  });
+
+  function changeTake(delta) {
+    const take = Math.min(999, Math.max(1, state.take + delta));
+    if (take === state.take) return;
+    const wasSyncing = sync.running;
+    if (wasSyncing) stopSync();       // a sync sequence belongs to one take
+    state.take = take;
+    writeFragment();
+    renderSlate();
+    keepAwake().then(showDiag);
+  }
+  $("b-next").addEventListener("click", () => changeTake(+1));
+  $("b-prev").addEventListener("click", () => changeTake(-1));
+  $("b-sync").addEventListener("click", () => {
+    keepAwake().then(showDiag);
+    sync.running ? stopSync() : startSync();
+  });
+  $("b-edit").addEventListener("click", () => showSetup());
+  $("b-full").addEventListener("click", () => {
+    const el = document.documentElement;
+    if (document.fullscreenElement) document.exitFullscreen?.();
+    else (el.requestFullscreen || el.webkitRequestFullscreen)?.call(el);
+    keepAwake().then(showDiag);
+  });
+
+  let resizeTimer = 0;
+  window.addEventListener("resize", () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      if ($("slate").hidden) return;
+      if (sync.running) stageFlip(sync.k);
+      else renderSlate();
+    }, 100);
+  });
+
+  window.addEventListener("hashchange", start);
+
+  function start() {
+    Object.assign(state, readFragment());
+    if (state.id && validId(state.id)) showSlate();
+    else showSetup(state.id ? "That id is not usable as a dataset id." : "");
+  }
+  start();
+
+  // For testing: lets a harness read the payloads without scraping pixels.
+  window.slate = { state, sync, slatePayload, syncPayload, startSync, stopSync, step };
+})();
+</script>
+</body>
+</html>
