@@ -103,6 +103,31 @@ drawn by the slate page's own encoder through ingest end to end.
 
 ---
 
+## Storage: keeping DaVis projects on the work and backup drives
+
+The acquisition PC's disk fills with tomographic PIV recordings (60+ GB each).
+`experimentkit storage` keeps each registered DaVis project snapshotted on a
+work drive (copied from C:) and a backup drive (copied from the work drive),
+waits quietly for either drive to be plugged in, and says which recordings are
+safe to delete from C: -- once both copies exist and the backup has been
+re-read in full. It never deletes anything; you delete in DaVis. Design and
+decisions: [docs/design/storage-sync.md](docs/design/storage-sync.md).
+
+```bash
+experimentkit storage volume G:\ --id xulab-work-01 --purpose work        # once per drive
+experimentkit storage volume F:\ --id xulab-backup-01 --purpose backup
+experimentkit storage add C:\...\Project_Tomo_Setup --work xulab-work-01 --backup xulab-backup-01
+experimentkit storage sync            # C: -> work -> backup, checksumming as it copies
+experimentkit storage verify          # re-read the copies (makes recordings deletable)
+experimentkit storage status          # what is where, and what can go from C:
+experimentkit storage schedule        # prints the hourly/nightly scheduled-task commands
+```
+
+Needs only the standard library (daviskit, if installed, reads the `.set`
+files), so it runs on the DaVis PC without OpenCV.
+
+---
+
 ## Where it sits
 
 The research tools split into two roles.

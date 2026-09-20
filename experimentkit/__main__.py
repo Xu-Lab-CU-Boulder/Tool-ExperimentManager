@@ -3,6 +3,7 @@
 
     experimentkit ingest <card or folder> --dry-run      where would every clip go?
     experimentkit ingest <card or folder> --dry-run --json
+    experimentkit storage status | sync | verify     project snapshots on the work and backup drives
 
 Run from inside a project repo, or pass --project. Nothing is copied: stage 1
 of ingest only reports. Copying arrives in stage 2, and will act only on what
@@ -19,7 +20,6 @@ from pathlib import Path
 from projectkit.config import Config, ConfigError
 from projectkit.util import human_bytes
 
-from . import ingest as ingest_mod
 from .payload import take_folder
 
 #: Version of the --json payload shape. Adding keys is free; renaming bumps it.
@@ -27,6 +27,8 @@ JSON_SCHEMA = 1
 
 
 def _facts(plan: ingest_mod.IngestPlan) -> dict:
+    from . import ingest as ingest_mod
+
     clips = []
     for c in plan.clips:
         r = c.reading
@@ -67,6 +69,8 @@ def _facts(plan: ingest_mod.IngestPlan) -> dict:
 
 
 def _print_text(plan: ingest_mod.IngestPlan, cfg: Config) -> None:
+    from . import ingest as ingest_mod
+
     print(f"ingest --dry-run   {plan.source}")
     print(f"into project       {plan.project}\n")
 
@@ -119,6 +123,10 @@ def _print_text(plan: ingest_mod.IngestPlan, cfg: Config) -> None:
 
 
 def cmd_ingest(args) -> int:
+    # Imported here: ingest needs OpenCV and markertracker, and `storage` must run
+    # on machines (like the DaVis PC) that have neither.
+    from . import ingest as ingest_mod
+
     if not args.dry_run:
         print("error: only --dry-run exists yet. It reports where every clip would "
               "go and copies nothing; copying arrives in stage 2.", file=sys.stderr)
@@ -164,6 +172,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="how far into each end of a clip to look for the slate")
     p.add_argument("--json", action="store_true", help="print one JSON object instead of text")
     p.set_defaults(fn=cmd_ingest)
+
+    from .storage.cli import add_storage_parser
+
+    add_storage_parser(sub)
     return parser
 
 
