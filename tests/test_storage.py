@@ -334,6 +334,43 @@ def test_the_scheduled_task_can_find_the_package(rig, capsys, monkeypatch):
     assert "cmd /c" not in capsys.readouterr().out
 
 
+def test_a_kept_recording_is_verified_but_never_offered_for_deletion(rig, capsys):
+    """The self-cal recordings a calibration came from stay on C: with the project,
+    however well the drives hold them."""
+    sync.sync_project(rig.project)
+    sync.verify(rig.project, volumes.find_volumes()["xulab-backup-01"], role="backup")
+    assert states(rig.project)["Tow_A"] == sync.SAFE
+
+    assert main(["storage", "keep", "Tow_A"]) == 0
+    assert "kept on C:: Tow_A" in capsys.readouterr().out
+    assert states(rig.project)["Tow_A"] == sync.KEPT
+
+    # kept is not "unsynced": the copies are still made, checked and recorded
+    _, st = sync.sync_project(rig.project)
+    wl = Ledger(rig.g / "Tank")
+    assert "Tank/Tow_A" in wl.deletable, "the ledger still knows both copies are good"
+    assert (rig.f / "Tank" / "Tow_A" / "Camera1-0.ims").exists()
+    offered = [r.name for r, _ in st.by_state(sync.SAFE)]
+    assert "Tow_A" not in offered and offered, "others are still offered, Tow_A is not"
+
+    # and the list itself rides along to the drives
+    assert (rig.g / "Tank.keep").is_file()
+
+    assert main(["storage", "keep", "Tow_A", "--remove"]) == 0
+    capsys.readouterr()
+    assert states(rig.project)["Tow_A"] == sync.SAFE
+
+
+def test_keep_patterns_match_folders_names_and_exceptions(rig):
+    from experimentkit.storage import keep
+
+    patterns = ["Volume_Self_Cal/*", "Toy_Jellyfish", "!Volume_Self_Cal/Scratch"]
+    assert keep.matches("Volume_Self_Cal/Laser_100", patterns)
+    assert keep.matches("Working/Toy_Jellyfish", patterns), "a bare name matches anywhere"
+    assert not keep.matches("Volume_Self_Cal/Scratch", patterns), "! takes one back out"
+    assert not keep.matches("Working/Tow_A", patterns)
+
+
 def test_cli_status_and_dry_run(rig, capsys):
     assert main(["storage", "sync", "--dry-run"]) == 0
     out = capsys.readouterr().out

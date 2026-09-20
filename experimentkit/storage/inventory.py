@@ -70,17 +70,17 @@ def set_time(set_file: Path) -> str:
 
 
 def inventory(source: Path) -> dict[str, FileEntry]:
-    """Every file of a project -- its folder, the .exp and the .qc folder beside it -- by path.
+    """Every file of a project -- its folder, and the .exp, .keep and .qc beside it -- by path.
 
     Paths are relative to the project's parent folder, so all three share one namespace.
     """
     source = Path(source)
     parent = source.parent
     files: dict[str, FileEntry] = {}
-    exp = parent / f"{source.name}.exp"
-    if exp.is_file():
-        st = exp.stat()
-        files[exp.name] = FileEntry(exp.name, st.st_size, st.st_mtime_ns)
+    for beside in (parent / f"{source.name}.exp", parent / f"{source.name}.keep"):
+        if beside.is_file():
+            st = beside.stat()
+            files[beside.name] = FileEntry(beside.name, st.st_size, st.st_mtime_ns)
     files.update(walk(source, parent))
     qc = parent / f"{source.name}.qc"
     if qc.is_dir():

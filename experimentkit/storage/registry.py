@@ -49,6 +49,11 @@ class SyncProject:
         """The QC database, beside the project folder (never inside it)."""
         return self.source.parent / f"{self.source.name}.qc"
 
+    @property
+    def keep_file(self) -> Path:
+        """Recordings to keep on C: whatever the drives hold (storage.keep)."""
+        return self.source.parent / f"{self.source.name}.keep"
+
 
 def registry_path() -> Path:
     override = os.environ.get("EXPERIMENTKIT_STORAGE")

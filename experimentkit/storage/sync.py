@@ -34,6 +34,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import keep
 from .inventory import FileEntry, Recording, inventory, recordings, walk
 from .ledger import Ledger, copy_hashing, hash_file
 from .registry import SyncProject
@@ -320,14 +321,18 @@ def verify(project: SyncProject, volume: Volume, *, role: str, budget_gb: float 
 
 # -- status ------------------------------------------------------------------------------------
 
-SAFE, REREAD, WORK_ONLY, NEEDS_SYNC, C_ONLY = (
+SAFE, REREAD, WORK_ONLY, NEEDS_SYNC, C_ONLY, KEPT = (
     "safe to delete", "waiting for backup re-read", "on work only",
-    "new or changed on C:", "on C: only")
+    "new or changed on C:", "on C: only", "kept on C:")
 
 
 def classify(rec: Recording, files: dict[str, FileEntry], wl: Ledger | None,
-             bl: Ledger | None) -> tuple[str, str]:
-    """Where one recording stands, and the first reason it is not yet safe to delete."""
+             bl: Ledger | None, patterns: list[str] | None = None) -> tuple[str, str]:
+    """Where one recording stands, and the first reason it is not yet safe to delete.
+
+    A recording listed in the project's `.keep` file is backed up and verified
+    like any other; it is reported as KEPT rather than as safe to delete.
+    """
     if wl is None or rec.rel not in wl.source_map:
         return C_ONLY, ""
     owners = {rec.rel: wl.source_map[rec.rel]}
@@ -348,6 +353,8 @@ def classify(rec: Recording, files: dict[str, FileEntry], wl: Ledger | None,
             return REREAD, "work copy not yet verified"
         if b.get("verified") != "full":
             return REREAD, "backup copy not yet re-read"
+    if patterns and keep.matches(rec.name, patterns):
+        return KEPT, "both copies verified; listed in the .keep file"
     return SAFE, ""
 
 
@@ -383,13 +390,17 @@ def status(project: SyncProject, volumes: dict[str, Volume] | None = None,
     work, backup = volumes.get(project.work), volumes.get(project.backup or "")
     wl = Ledger(work.root / project.name) if work else None
     bl = Ledger(backup.root / project.name) if backup else None
+    # QC output and the keep list are ours and the user's, not the camera's:
+    # touching them must not make a project look like it is still recording.
+    ours = (f"{project.name}.qc/", f"{project.name}.keep")
     newest = max((e.mtime_ns for rel, e in files.items()
-                  if not rel.startswith(f"{project.name}.qc/")), default=0)
+                  if not rel.startswith(ours)), default=0)
     minutes = (time.time_ns() - newest) / 60e9
     owned = {rel for r in recs for rel in r.files}
     other = sum(1 for rel, e in files.items() if rel not in owned and not
                 (wl and (s := wl.state(rel)) and s["size"] == e.size
                  and s["source_mtime_ns"] == e.mtime_ns))
+    patterns = keep.read_patterns(project.keep_file)
     current = {wl.source_map.get(r.rel, r.rel) for r in recs} if wl else set()
     gone_unsafe = sorted(r for r, safe in (wl.gone.items() if wl else []) if not safe
                          and r not in current)
@@ -410,7 +421,7 @@ def status(project: SyncProject, volumes: dict[str, Volume] | None = None,
         source_bytes=sum(e.size for e in files.values()),
         free_bytes=shutil.disk_usage(project.source).free,
         quiet=minutes >= QUIET_MINUTES, minutes_since_change=minutes,
-        recordings=[(r, *classify(r, files, wl, bl)) for r in recs],
+        recordings=[(r, *classify(r, files, wl, bl, patterns)) for r in recs],
         other_pending=other, gone_unsafe=gone_unsafe, archived=archived,
         duplicates=duplicates, archive_only=archive_only, backup_pending_files=pending)
 
@@ -481,7 +492,10 @@ def sync_project(project: SyncProject, *, now: bool = False, dry_run: bool = Fal
         wl = Ledger(work.root / project.name)
         for rec, state, _ in after.recordings:
             target = wl.source_map.get(rec.rel, rec.rel)
-            if state == SAFE and target not in wl.deletable:
+            # KEPT means "verified, but the user wants it here": the ledger
+            # still records that both copies are good, so a kept recording that
+            # is deleted later is not mistaken for one lost too early.
+            if state in (SAFE, KEPT) and target not in wl.deletable:
                 wl.add("deletable", rel=target)
         current = {wl.source_map.get(r.rel, r.rel) for r in recs}
         for rel in list(wl.source_map.values()):

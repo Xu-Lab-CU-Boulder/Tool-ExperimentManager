@@ -5,6 +5,7 @@
                               [--qc-mirror <OneDrive folder>]
     experimentkit storage status [--json]
     experimentkit storage sync [--project P] [--dry-run] [--now] [--background] [--no-qc]
+    experimentkit storage keep [pattern ...] [--remove]
     experimentkit storage qc [--backfill] [--budget N]
     experimentkit storage verify [--project P] [--budget-gb 200] [--background]
     experimentkit storage schedule          prints the hourly scheduled-task command
@@ -16,6 +17,7 @@ import json
 import sys
 from pathlib import Path
 
+from . import keep as keep_mod
 from . import qc as qc_mod
 from . import registry, sync, volumes
 from .ledger import Ledger
@@ -71,6 +73,12 @@ def print_status(st: sync.ProjectStatus) -> None:
           + ("   (delete them in DaVis)" if safe else ""))
     for r, _ in safe:
         print(f"      {r.name:<60} {_gb(r.size):>10}")
+    kept = st.by_state(sync.KEPT)
+    if kept:
+        print(f"  kept on C: (your {p.keep_file.name}):   {len(kept)} recording(s), "
+              f"{_gb(sum(r.size for r, _ in kept))}   both copies verified")
+        for r, _ in kept:
+            print(f"      {r.name:<60} {_gb(r.size):>10}")
     for state in (sync.REREAD, sync.WORK_ONLY, sync.NEEDS_SYNC, sync.C_ONLY):
         rows = st.by_state(state)
         if rows:
@@ -265,6 +273,31 @@ def _installed() -> bool:
         return False
 
 
+def cmd_keep(args) -> int:
+    """List, add to, or take from the recordings a project keeps on C:."""
+    for p in _projects(args.project):
+        patterns = keep_mod.read_patterns(p.keep_file)
+        if args.pattern:
+            changed = (keep_mod.remove(p.keep_file, args.pattern) if args.remove
+                       else keep_mod.add(p.keep_file, args.pattern))
+            verb = "no longer kept" if args.remove else "kept on C:"
+            print(f"{p.name}: {verb}: " + (", ".join(changed) if changed else "nothing changed"))
+            patterns = keep_mod.read_patterns(p.keep_file)
+        print(f"{p.name}: {p.keep_file}")
+        for pattern in patterns:
+            print(f"    {pattern}")
+        if not patterns:
+            print("    (nothing kept: every verified recording is offered for deletion)")
+        st = sync.status(p)
+        kept = st.by_state(sync.KEPT)
+        if kept:
+            print(f"  matching now: {len(kept)} recording(s), "
+                  f"{_gb(sum(r.size for r, _ in kept))}")
+            for r, _ in kept:
+                print(f"      {r.name}")
+    return 0
+
+
 def cmd_schedule(args) -> int:
     exe = Path(sys.executable)
     pyw = exe.with_name("pythonw.exe") if exe.with_name("pythonw.exe").exists() else exe
@@ -337,6 +370,16 @@ def add_storage_parser(sub) -> None:
                    help="measure recordings that are only on the work drive now")
     q.add_argument("--budget", type=int, help="at most this many recordings")
     q.set_defaults(fn=cmd_qc)
+
+    k = ssub.add_parser("keep", help="recordings to keep on C: however well they are backed up",
+                        description="Globs in <project>.keep, one per line, matched against a "
+                                    "recording's path in the project (Volume_Self_Cal/* or just "
+                                    "Toy_Jellyfish_Media_Only). A leading ! takes one back out. "
+                                    "Kept recordings are still copied and verified.")
+    k.add_argument("pattern", nargs="*", help="patterns to add (none: just list)")
+    k.add_argument("--remove", action="store_true", help="take these patterns out instead")
+    k.add_argument("--project", help="one project by name (default: all)")
+    k.set_defaults(fn=cmd_keep)
 
     r = ssub.add_parser("verify", help="re-read the copies on the drives (resumable)")
     r.add_argument("--project")
