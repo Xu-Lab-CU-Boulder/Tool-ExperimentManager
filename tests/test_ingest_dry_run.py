@@ -13,6 +13,10 @@ import json
 import os
 
 import pytest
+
+pytest.importorskip("cv2", reason="ingest reads frames with OpenCV")
+pytest.importorskip("markertracker", reason="ingest reads clips with markertracker")
+
 from conftest import frames_for, label, snapshot, write_sequence, write_video
 
 from experimentkit import ingest as ingest_mod

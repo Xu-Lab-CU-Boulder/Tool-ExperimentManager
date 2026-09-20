@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import cv2
 import numpy as np
 import pytest
 from projectkit.config import Config
@@ -75,6 +74,8 @@ def slate_frame(text: str | None, seed: int = 0) -> np.ndarray:
     """
     frame = np.roll(_background(), seed % SIZE[0], axis=1).copy()
     if text is not None:
+        import cv2
+
         code = cv2.QRCodeEncoder.create().encode(text)
         code = cv2.resize(code, None, fx=8, fy=8, interpolation=cv2.INTER_NEAREST)
         h, w = code.shape
@@ -100,6 +101,8 @@ def frames_for(seconds: float, head: list[str] | None = None,
 
 def write_video(path: Path, frames: list[np.ndarray]) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
+    import cv2
+
     writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), FPS, SIZE)
     assert writer.isOpened(), "OpenCV cannot write mp4v on this machine"
     for frame in frames:
@@ -111,6 +114,8 @@ def write_video(path: Path, frames: list[np.ndarray]) -> Path:
 def write_sequence(folder: Path, frames: list[np.ndarray]) -> Path:
     folder.mkdir(parents=True, exist_ok=True)
     for i, frame in enumerate(frames):
+        import cv2
+
         cv2.imwrite(str(folder / f"frame_{i:05d}.png"), frame)
     return folder
 

@@ -12,9 +12,11 @@ from __future__ import annotations
 
 import shutil
 
-import cv2
 import numpy as np
 import pytest
+
+cv2 = pytest.importorskip("cv2", reason="the page's codes are decoded with OpenCV")
+pytest.importorskip("markertracker", reason="ingest reads clips with markertracker")
 from conftest import FPS, SIZE, _background, label, write_video
 
 from experimentkit import ingest as ingest_mod
