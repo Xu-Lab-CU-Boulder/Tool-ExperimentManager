@@ -254,16 +254,43 @@ def cmd_verify(args) -> int:
     return 1 if problems else 0
 
 
+def _installed() -> bool:
+    """Is experimentkit importable from anywhere, or only from its own folder?"""
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        version("experimentkit")
+        return True
+    except PackageNotFoundError:
+        return False
+
+
 def cmd_schedule(args) -> int:
     exe = Path(sys.executable)
     pyw = exe.with_name("pythonw.exe") if exe.with_name("pythonw.exe").exists() else exe
-    run = f'"{pyw}" -m experimentkit storage sync --background'
-    check = f'"{pyw}" -m experimentkit storage verify --background --budget-gb 300'
+    # A scheduled task starts in system32. `-m experimentkit` needs the package
+    # on the path, and when it is not installed, only its own folder provides
+    # that -- so the task has to start there.
+    repo = Path(__file__).resolve().parent.parent.parent
+
+    def quoted(path: Path) -> str:
+        # schtasks passes /TR as one quoted string, so a quote inside it has to
+        # be doubled. Paths without spaces need none, which keeps this readable.
+        return f'""{path}""' if " " in str(path) else str(path)
+
+    def task(command: str) -> str:
+        line = f"{quoted(pyw)} -m experimentkit storage {command}"
+        return line if _installed() else f"cmd /c cd /d {quoted(repo)} && {line}"
+
     print("Hourly sync (with QC), and a nightly re-read of the copies, as Windows scheduled")
     print("tasks. Run these yourself (they change the PC's scheduled tasks):\n")
-    print(f'schtasks /Create /SC HOURLY /TN "experimentkit storage sync" /TR "{run}" /F')
+    print(f'schtasks /Create /SC HOURLY /TN "experimentkit storage sync" '
+          f'/TR "{task("sync --background")}" /F')
     print(f'schtasks /Create /SC DAILY /ST 02:00 /TN "experimentkit storage verify" '
-          f'/TR "{check}" /F')
+          f'/TR "{task("verify --background --budget-gb 300")}" /F')
+    if not _installed():
+        print(f"\nThe tasks start in {repo} because experimentkit is not installed on this PC.")
+        print(f'Installing it ("pip install -e {repo}") would let them run from anywhere.')
     print("\nRemove with: schtasks /Delete /TN \"experimentkit storage sync\" /F")
     return 0
 

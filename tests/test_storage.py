@@ -318,6 +318,22 @@ def test_one_verify_run_finishes_a_work_only_recording(rig, capsys):
         "the backup copy is checked in the same run that fingerprints the work copy"
 
 
+def test_the_scheduled_task_can_find_the_package(rig, capsys, monkeypatch):
+    """A scheduled task starts in system32, where `-m experimentkit` only works
+    if the package is installed. It is not, on the PIV workstation."""
+    import experimentkit.storage.cli as cli
+
+    root = str(Path(cli.__file__).resolve().parent.parent.parent)
+    monkeypatch.setattr(cli, "_installed", lambda: False)
+    assert main(["storage", "schedule"]) == 0
+    out = capsys.readouterr().out
+    assert out.count(f"cmd /c cd /d {root} &&") == 2, "both tasks start in the repo"
+
+    monkeypatch.setattr(cli, "_installed", lambda: True)
+    assert main(["storage", "schedule"]) == 0
+    assert "cmd /c" not in capsys.readouterr().out
+
+
 def test_cli_status_and_dry_run(rig, capsys):
     assert main(["storage", "sync", "--dry-run"]) == 0
     out = capsys.readouterr().out
