@@ -613,6 +613,10 @@ def sync_project(project: SyncProject, *, now: bool = False, dry_run: bool = Fal
     before = status(project, volumes, files)
     results: list[StageResult] = []
 
+    if pause_path(project).is_file():
+        # a pause stops everything, scheduled runs included -- not just the copying
+        return [StageResult("paused", waiting="paused by the user; "
+                            "`experimentkit storage resume` to carry on")], before
     if not now and not before.quiet:
         r = StageResult("C: -> " + project.work)
         r.waiting = (f"project changed {before.minutes_since_change:.0f} min ago "

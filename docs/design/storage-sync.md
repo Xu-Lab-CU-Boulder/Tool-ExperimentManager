@@ -92,7 +92,7 @@ Project_Hula_Hoop/
 Facts the design depends on:
 
 - **A recording is two things**: the folder and the `.set` beside it. Copy one without the other and
-  DaVis drops the recording from its project list (the fault `daviskit.io.audit_sets` catches).
+  DaVis drops the recording from its project list (the fault `daviskit.io.Project.audit_sets` catches).
 - **`SetTime` inside the `.set` survives a rename in DaVis**, so it is the recording's identity.
 - **Processed results appear inside recordings long after they were recorded.** A recording is never
   "finished" for good; the sync copies what is new.
@@ -305,3 +305,18 @@ hand so far.
 4. **What else counts as a source?** Only DaVis projects for now, or also the notes/raw folders and
    camera capture folders later?
 5. **WORKFLOW-PLAN item 7** says daviskit copies; this design moves the copying here. Agree?
+6. **Make it simple enough to forget about** (asked by the user 2026-09-21, after getting it
+   working): "the current user interface and experience getting sync to work is quite complex and
+   hard to use ... we should make it so this uses much simpler commands and does most of this
+   backing up automatically, but the user is able to view status, pause." Getting it running took
+   a volume label per drive, a registry entry run from the right shell, two `schtasks` lines, a
+   keep list, and knowledge of `--phased`. What that suggests:
+   - **One setup command** that labels the drives, registers the project and installs the
+     scheduled tasks, run once from the user's own shell (an agent's sandbox cannot see `AppData`).
+   - **Phased, ten-minute, background syncing as the only mode**, not a flag to remember.
+   - **Three everyday verbs**: see what is happening (`status`/`watch`), `pause`, `resume`.
+     Everything else is set-up or diagnosis.
+   - **A tray icon or a notification** when something is safe to delete or a drive is needed,
+     instead of a command to go and look.
+   Not started; the current commands are fine for now.
+

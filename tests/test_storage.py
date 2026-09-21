@@ -503,3 +503,13 @@ def test_a_recording_backed_up_after_it_left_c_stops_being_an_alarm(rig):
     st = sync.status(rig.project)
     assert not st.gone_unsafe, "now that the backup is re-read, the alarm clears"
     assert "Tank/Tow_A" in st.archived
+
+
+def test_a_pause_stops_scheduled_runs_before_they_do_anything(rig):
+    """The cheat sheet promises that a pause holds the scheduled runs too. A run that
+    started its QC or marked itself running while paused would break that."""
+    sync.pause_path(rig.project).write_text("paused\n", encoding="utf8")
+    results, _ = sync.sync_project(rig.project)
+    assert [r.stage for r in results] == ["paused"]
+    assert sync.running(rig.project) is None, "it never even marked itself as running"
+    assert not (rig.g / "Tank").exists()

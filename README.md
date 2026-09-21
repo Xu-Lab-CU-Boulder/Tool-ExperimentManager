@@ -117,11 +117,32 @@ decisions: [docs/design/storage-sync.md](docs/design/storage-sync.md).
 experimentkit storage volume G:\ --id xulab-work-01 --purpose work        # once per drive
 experimentkit storage volume F:\ --id xulab-backup-01 --purpose backup
 experimentkit storage add C:\...\Project_Tomo_Setup --work xulab-work-01 --backup xulab-backup-01
-experimentkit storage sync            # C: -> work -> backup, checksumming as it copies
+experimentkit storage sync --phased   # one recording at a time, oldest first, to a verified backup
 experimentkit storage verify          # re-read the copies (makes recordings deletable)
-experimentkit storage status          # what is where, and what can go from C:
-experimentkit storage schedule        # prints the hourly/nightly scheduled-task commands
+experimentkit storage status          # what is where, what can go from C:, safe to unplug?
+experimentkit storage watch           # the same, refreshed -- a screen to leave open
+experimentkit storage pause | resume  # stop cleanly at the next recording; carry on later
+experimentkit storage keep "Volume_Self_Cal/*"   # never offer these for deletion
+experimentkit storage schedule        # prints the scheduled-task commands to run yourself
 ```
+
+**Run `storage add` from your own shell, not from an agent's.** An agent's sandbox
+can redirect writes to `AppData`, so a registry it creates may be invisible to you
+and to the scheduled tasks -- which then report "no projects registered" and do
+nothing (2026-09-20).
+
+**What a day of recording taught it** (2026-09-20, when C: filled with 470 GB
+still only there):
+
+- The sync runs **every 10 minutes**, not hourly. A run that finds the project
+  busy does nothing and waits for the next, so an hourly schedule can miss every
+  quiet gap in a working day; a run with nothing to do costs a directory walk.
+- **`--phased`** carries each recording the whole way -- C:, work, backup,
+  re-read -- before starting the next, so space is freed early instead of only
+  when the whole backlog is through.
+- A recording that left C: before it was safe is judged against the drives
+  *now*, so the alarm clears once its copies are verified rather than crying for
+  ever.
 
 Needs only the standard library (daviskit, if installed, reads the `.set`
 files), so it runs on the DaVis PC without OpenCV.

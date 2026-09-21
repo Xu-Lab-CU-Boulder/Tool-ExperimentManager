@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -446,7 +447,13 @@ def add_storage_parser(sub) -> None:
     a.add_argument("--qc-mirror", help="second home for the QC database (e.g. on OneDrive)")
     a.set_defaults(fn=cmd_add)
 
-    s = ssub.add_parser("status", help="what is where, and what is safe to delete from C:")
+    s = ssub.add_parser("status", help="what is where, and what is safe to delete from C:",
+                        formatter_class=argparse.RawDescriptionHelpFormatter, epilog="""examples:
+  experimentkit storage status
+      free space on C:, what is safe to delete (delete it in DaVis), what is kept,
+      and on the last line: a sync is running (do NOT unplug a drive) or it is safe
+      to unplug the drives
+""")
     s.add_argument("--project")
     s.add_argument("--json", action="store_true")
     s.set_defaults(fn=cmd_status)
@@ -482,16 +489,32 @@ def add_storage_parser(sub) -> None:
     k.add_argument("--project", help="one project by name (default: all)")
     k.set_defaults(fn=cmd_keep)
 
-    w = ssub.add_parser("watch", help="a screen to leave open: progress, refreshed")
+    w = ssub.add_parser("watch", help="a screen to leave open: progress, refreshed",
+                        formatter_class=argparse.RawDescriptionHelpFormatter, epilog="""examples:
+  experimentkit storage watch
+      the status screen, refreshed every 30 s, plus how much each drive took in the
+      last 10 minutes. Ctrl-C stops watching; the sync itself carries on
+""")
     w.add_argument("--interval", type=int, default=30, help="seconds between refreshes")
     w.add_argument("--project")
     w.set_defaults(fn=cmd_watch)
 
-    pz = ssub.add_parser("pause", help="stop a running sync cleanly; it resumes where it stopped")
+    pz = ssub.add_parser("pause", help="stop a running sync cleanly; it resumes where it stopped",
+                         formatter_class=argparse.RawDescriptionHelpFormatter, epilog="""examples:
+  experimentkit storage pause
+      before recording, or before unplugging a drive: the sync stops after the
+      recording it is copying, and stays stopped -- the scheduled runs wait too.
+      Nothing is lost; every finished file is in the drive's ledger
+""")
     pz.add_argument("--project")
     pz.set_defaults(fn=cmd_pause)
 
-    rz = ssub.add_parser("resume", help="undo a pause")
+    rz = ssub.add_parser("resume", help="undo a pause; syncing carries on where it stopped",
+                         formatter_class=argparse.RawDescriptionHelpFormatter, epilog="""examples:
+  experimentkit storage resume
+      the next scheduled run (within 10 minutes) picks up where the pause left off;
+      run `experimentkit storage sync --phased` to start straight away
+""")
     rz.add_argument("--project")
     rz.set_defaults(fn=cmd_resume)
 
