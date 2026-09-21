@@ -215,8 +215,8 @@ projectkit as a library, and the dependency only ever points one way.
    and `check`, the same integrity checks you would run by hand.
 7. **Git stays the user's.** ExperimentManager writes files and never commits.
 
-projectkit guarantees its side of this, and `tests/test_sidecar_contract.py` in
-ProjectManager pins it: every key it does not recognise survives `save`,
+projectkit guarantees its side of this, and
+`ProjectManager/tests/test_sidecar_contract.py` pins it: every key it does not recognise survives `save`,
 `dataset edit` and `dataset scan`; `dataset check` never writes; a newer major
 schema is refused and left untouched; a newer minor is rewritten without being
 downgraded. The tests were checked against deliberately broken copies of

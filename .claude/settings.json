@@ -1,0 +1,19 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"C:/Users/LaVision/Documents/GitHub/Lab-Code-Guide/tools/whatsnew.py\" --project . --mark"
+          },
+          {
+            "type": "command",
+            "command": "python \"C:/Users/LaVision/Documents/GitHub/Lab-Code-Guide/tools/reconcile.py\" \"C:/Users/LaVision/Documents/GitHub/Tool-ExperimentManager\" --quiet"
+          }
+        ]
+      }
+    ]
+  }
+}
