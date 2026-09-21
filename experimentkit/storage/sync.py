@@ -27,7 +27,9 @@ Design: docs/design/storage-sync.md. The rules that matter:
 from __future__ import annotations
 
 import datetime as dt
+import json
 import os
+import subprocess
 import shutil
 import sys
 import time
@@ -130,8 +132,13 @@ def _to_drive(rel: str, owners: dict[str, str]) -> str:
 
 
 def sync_to_work(project: SyncProject, work: Volume, files: dict[str, FileEntry],
-                 recs: list[Recording], *, dry_run: bool = False) -> StageResult:
-    """C: -> work: copy what is new or changed, fingerprinting as it reads C:."""
+                 recs: list[Recording], *, dry_run: bool = False,
+                 only: set[str] | None = None) -> StageResult:
+    """C: -> work: copy what is new or changed, fingerprinting as it reads C:.
+
+    `only` limits the copy to those source-relative paths, which is how a phased
+    sync moves one recording at a time (see `sync_project(phased=True)`).
+    """
     result = StageResult("C: -> " + work.id)
     base = work.root
     ledger = Ledger(base / project.name)
@@ -149,6 +156,8 @@ def sync_to_work(project: SyncProject, work: Volume, files: dict[str, FileEntry]
             ledger.add("recording", rel=dst, set_time=rec.set_time, source_rel=rec.rel)
     stamp = _stamp()
     for rel, e in _set_last(files.items()):
+        if only is not None and rel not in only:
+            continue
         drive_rel = _to_drive(rel, owners)
         src, dst = parent / rel, base / drive_rel
         state = ledger.state(drive_rel)
@@ -206,8 +215,11 @@ def _follow_layout(backup: Volume, bl: Ledger, work_recs: dict[str, str],
 
 
 def sync_to_backup(project: SyncProject, work: Volume, backup: Volume, *,
-                   dry_run: bool = False) -> StageResult:
-    """work -> backup: copy everything the backup lacks, verifying the work copy as it is read."""
+                   dry_run: bool = False, only: set[str] | None = None) -> StageResult:
+    """work -> backup: copy everything the backup lacks, verifying the work copy as it is read.
+
+    `only` limits it to those work-drive-relative paths, for a phased sync.
+    """
     result = StageResult(f"{work.id} -> {backup.id}")
     wl = Ledger(work.root / project.name)
     bl = Ledger(backup.root / project.name)
@@ -231,6 +243,8 @@ def sync_to_backup(project: SyncProject, work: Volume, backup: Volume, *,
                 bl.add("recording", rel=rel, set_time=t)
     stamp = _stamp()
     for rel, we in _set_last(work_files.items()):
+        if only is not None and rel not in only:
+            continue
         ws = wl.state(rel)
         src, dst = work.root / rel, backup.root / rel
         bs = bl.state(rel)
@@ -326,6 +340,19 @@ SAFE, REREAD, WORK_ONLY, NEEDS_SYNC, C_ONLY, KEPT = (
     "new or changed on C:", "on C: only", "kept on C:")
 
 
+def safely_backed_up(wl: Ledger, bl: Ledger | None, rel: str) -> bool:
+    """Is every file of this recording on the work drive and re-read on the backup?
+
+    The question `classify` asks of a recording on C:, asked of one that has left it.
+    """
+    if bl is None:
+        return False
+    files = [r for r in wl.files if r == rel or r.startswith(rel + "/") or r == f"{rel}.set"]
+    if not files:
+        return False
+    return all((b := bl.state(r)) and b.get("verified") == "full" for r in files)
+
+
 def classify(rec: Recording, files: dict[str, FileEntry], wl: Ledger | None,
              bl: Ledger | None, patterns: list[str] | None = None) -> tuple[str, str]:
     """Where one recording stands, and the first reason it is not yet safe to delete.
@@ -402,10 +429,17 @@ def status(project: SyncProject, volumes: dict[str, Volume] | None = None,
                  and s["source_mtime_ns"] == e.mtime_ns))
     patterns = keep.read_patterns(project.keep_file)
     current = {wl.source_map.get(r.rel, r.rel) for r in recs} if wl else set()
-    gone_unsafe = sorted(r for r, safe in (wl.gone.items() if wl else []) if not safe
-                         and r not in current)
-    archived = sorted(r for r, safe in (wl.gone.items() if wl else []) if safe
-                      and r not in current)
+    # A recording that left C: is judged against the drives *now*, not against the
+    # flag it carried when it vanished. On 2026-09-20 three recordings were moved to
+    # another disk by hand to free space, and were backed up and re-read hours later;
+    # without this they would have kept crying "lost too early" for ever, and an alarm
+    # that cannot clear itself is an alarm people learn to ignore.
+    gone_unsafe, archived = [], []
+    for rel, safe in (wl.gone.items() if wl else []):
+        if rel in current:
+            continue
+        (archived if safe or safely_backed_up(wl, bl, rel) else gone_unsafe).append(rel)
+    gone_unsafe, archived = sorted(gone_unsafe), sorted(archived)
     duplicates, archive_only, pending = [], 0, 0
     if wl:
         by_time: dict[str, list[str]] = {}
@@ -455,11 +489,125 @@ def mirror_qc(project: SyncProject) -> int:
     return copied
 
 
+#: Written while a sync is copying, so anyone can see it is happening and no one
+#: unplugs a drive mid-write; removed when the run ends, however it ends.
+RUNNING = "sync-running.json"
+#: Touch this and the running sync stops cleanly at the next recording boundary.
+PAUSED = "sync-paused"
+
+
+def running_path(project: SyncProject) -> Path:
+    return project.source.parent / f"{project.source.name}.{RUNNING}"
+
+
+def pause_path(project: SyncProject) -> Path:
+    return project.source.parent / f"{project.source.name}.{PAUSED}"
+
+
+def running(project: SyncProject) -> dict | None:
+    """What a sync is doing right now, or None. Stale markers (no such process) are ignored."""
+    path = running_path(project)
+    if not path.is_file():
+        return None
+    try:
+        state = json.loads(path.read_text(encoding="utf8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    pid = state.get("pid")
+    if pid and not _alive(pid):
+        state["stale"] = True
+    return state
+
+
+def _alive(pid: int) -> bool:
+    """Is that process still running? A crashed sync must not look like a live one."""
+    if sys.platform == "win32":
+        out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/NH"],
+                             capture_output=True, text=True)
+        return str(pid) in out.stdout
+    try:
+        os.kill(pid, 0)
+    except (ProcessLookupError, PermissionError):
+        return False
+    return True
+
+
+def _mark_running(project: SyncProject, **state) -> None:
+    path = running_path(project)
+    try:
+        path.write_text(json.dumps({"pid": os.getpid(), "at": _stamp(), **state}, indent=2),
+                        encoding="utf8")
+    except OSError:
+        pass
+
+
+def _clear_running(project: SyncProject) -> None:
+    try:
+        running_path(project).unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def _phased(project: SyncProject, work: Volume, backup: Volume | None,
+            files: dict[str, FileEntry], recs: list[Recording], *,
+            dry_run: bool) -> list[StageResult]:
+    """One recording at a time, oldest first: to the work drive, to the backup, re-read.
+
+    The whole-project order (everything to work, then everything to backup, then a
+    nightly re-read) means nothing is safe to delete until the last stage finishes.
+    With 470 GB waiting and C: nearly full -- 2026-09-20 -- that is the difference
+    between freeing space in forty minutes and freeing it tomorrow. Here each
+    recording is carried the whole way and marked deletable before the next starts.
+    """
+    results: list[StageResult] = []
+    wl = Ledger(work.root / project.name)
+    todo = sorted(recs, key=lambda r: r.newest_ns)
+    for n, rec in enumerate(todo, 1):
+        if pause_path(project).is_file():
+            results.append(StageResult("paused", waiting=(
+                f"paused after {n - 1} of {len(todo)} recording(s); "
+                f"`experimentkit storage resume` to carry on")))
+            break
+        owned = set(rec.files)
+        if all((s := wl.state(_to_drive(rel, wl.source_map))) and s.get("verified") == "full"
+               for rel in owned):
+            continue  # already through the whole chain
+        if not dry_run:
+            _mark_running(project, recording=rec.name, step=f"{n} of {len(todo)}",
+                          stage=f"C: -> {work.id}", bytes=rec.size)
+        to_work = sync_to_work(project, work, files, recs, dry_run=dry_run, only=owned)
+        to_work.stage = f"{rec.name}: C: -> {work.id}"
+        results.append(to_work)
+        if backup is None:
+            results.append(StageResult(f"{rec.name}: {work.id} -> {project.backup}",
+                                       waiting="backup drive not connected"))
+            continue
+        drive = {_to_drive(rel, Ledger(work.root / project.name).source_map) for rel in owned}
+        if not dry_run:
+            _mark_running(project, recording=rec.name, step=f"{n} of {len(todo)}",
+                          stage=f"{work.id} -> {backup.id}", bytes=rec.size)
+        to_backup = sync_to_backup(project, work, backup, dry_run=dry_run, only=drive)
+        to_backup.stage = f"{rec.name}: {work.id} -> {backup.id}"
+        results.append(to_backup)
+        if not dry_run:
+            _mark_running(project, recording=rec.name, step=f"{n} of {len(todo)}",
+                          stage=f"re-reading {backup.id}", bytes=rec.size)
+            checked, read, bad = verify(project, backup, role="backup", only=drive,
+                                        reference=Ledger(work.root / project.name))
+            note = f"{rec.name}: re-read {checked} file(s) on {backup.id}"
+            results.append(StageResult(note, waiting="; ".join(bad) if bad else ""))
+    return results
+
+
 def sync_project(project: SyncProject, *, now: bool = False, dry_run: bool = False,
-                 volumes: dict[str, Volume] | None = None, run_qc=None
-                 ) -> tuple[list[StageResult], ProjectStatus]:
+                 volumes: dict[str, Volume] | None = None, run_qc=None,
+                 phased: bool = False) -> tuple[list[StageResult], ProjectStatus]:
     """One sync of one project: QC of what is new, both copy stages if their drives are
-    here, then bookkeeping. `run_qc(project, files, recs)` is the QC step (qc.run_qc)."""
+    here, then bookkeeping. `run_qc(project, files, recs)` is the QC step (qc.run_qc).
+
+    `phased` carries one recording at a time all the way to a verified backup, so
+    space can be freed while the rest is still copying.
+    """
     volumes = find_volumes() if volumes is None else volumes
     files = inventory(project.source)
     before = status(project, volumes, files)
@@ -470,6 +618,8 @@ def sync_project(project: SyncProject, *, now: bool = False, dry_run: bool = Fal
         r.waiting = (f"project changed {before.minutes_since_change:.0f} min ago "
                      f"(< {QUIET_MINUTES}): a recording or processing may be running")
         return [r], before
+    if not dry_run:
+        _mark_running(project, stage="starting", recording="", step="")
     if run_qc is not None and not dry_run:
         run_qc(project, files, recordings(project.source, files))
         files = inventory(project.source)  # the QC folder has grown
@@ -477,9 +627,11 @@ def sync_project(project: SyncProject, *, now: bool = False, dry_run: bool = Fal
     work, backup = before.work, before.backup
     if work is None:
         results.append(StageResult("C: -> " + project.work, waiting="work drive not connected"))
+    elif phased:
+        results += _phased(project, work, backup, files, recs, dry_run=dry_run)
     else:
         results.append(sync_to_work(project, work, files, recs, dry_run=dry_run))
-    if project.backup:
+    if project.backup and not phased:
         if backup is None or work is None:
             missing = "backup drive" if backup is None else "work drive"
             results.append(StageResult(f"{project.work} -> {project.backup}",
@@ -504,4 +656,5 @@ def sync_project(project: SyncProject, *, now: bool = False, dry_run: bool = Fal
         after = status(project, volumes, files)
     if not dry_run:
         mirror_qc(project)
+        _clear_running(project)
     return results, after

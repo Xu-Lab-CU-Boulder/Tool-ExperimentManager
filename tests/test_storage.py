@@ -440,3 +440,66 @@ def test_the_qc_folder_is_snapshotted_and_mirrored_without_version_clutter(rig, 
     assert calls.count("Tow_B") == 1
     assert b"Tow_B" in (rig.f / "Tank.qc" / "validation.jsonl").read_bytes()
     assert not list((rig.g / "Tank" / ".versions").rglob("validation.jsonl"))
+
+
+def test_a_phased_sync_finishes_one_recording_before_starting_the_next(rig):
+    """Everything-then-everything means nothing is deletable until the last stage ends.
+    On 2026-09-20 that left 470 GB on a full C: at the end of a recording day. Phased
+    carries one recording to a verified backup, then takes the next."""
+    results, _ = sync.sync_project(rig.project, phased=True)
+    stages = [r.stage for r in results]
+    assert any("Tow_A" in s and "C: ->" in s for s in stages)
+    assert any("Tow_A" in s and "re-read" in s for s in stages)
+    # the first recording is verified on the backup before the second is copied there
+    first_reread = next(i for i, s in enumerate(stages) if "re-read" in s)
+    later_copies = [i for i, s in enumerate(stages) if "-> xulab-backup-01" in s]
+    assert any(i > first_reread for i in later_copies), "the next recording follows"
+    assert states(rig.project)["Tow_A"] == sync.SAFE, "deletable without waiting for the rest"
+
+
+def test_a_paused_sync_stops_between_recordings_and_resumes(rig):
+    sync.pause_path(rig.project).write_text("paused\n", encoding="utf8")
+    results, _ = sync.sync_project(rig.project, phased=True)
+    assert [r for r in results if r.stage == "paused"], "it stopped, and said so"
+    assert not (rig.g / "Tank" / "Tow_A").exists(), "nothing was copied while paused"
+
+    sync.pause_path(rig.project).unlink()
+    sync.sync_project(rig.project, phased=True)
+    assert (rig.g / "Tank" / "Tow_A" / "Camera1-0.ims").exists(), "it carried on afterwards"
+
+
+def test_the_running_marker_says_when_a_drive_must_not_be_unplugged(rig):
+    assert sync.running(rig.project) is None, "nothing running before a sync"
+    sync.sync_project(rig.project)
+    assert sync.running(rig.project) is None, "and the marker is cleared when it ends"
+
+    sync._mark_running(rig.project, recording="Tow_A", stage="C: -> work", step="1 of 2")
+    live = sync.running(rig.project)
+    assert live["recording"] == "Tow_A" and not live.get("stale")
+    sync._mark_running(rig.project, recording="Tow_A", stage="C: -> work", step="1 of 2")
+    import json
+    path = sync.running_path(rig.project)
+    state = json.loads(path.read_text(encoding="utf8"))
+    state["pid"] = 999999  # a process that is not there: a crashed sync, not a live one
+    path.write_text(json.dumps(state), encoding="utf8")
+    assert sync.running(rig.project)["stale"] is True
+
+
+def test_a_recording_backed_up_after_it_left_c_stops_being_an_alarm(rig):
+    """On 2026-09-20 three recordings were moved to another disk by hand to free space,
+    then backed up and re-read hours later. The alarm was raised at the moment they
+    vanished and nothing re-checked it, so it could never clear -- and an alarm that
+    cannot clear itself is one people learn to ignore."""
+    sync.sync_project(rig.project)  # copied to both drives, backup not yet re-read
+    for p in sorted((rig.source / "Tow_A").rglob("*"), reverse=True):
+        p.unlink() if p.is_file() else p.rmdir()
+    (rig.source / "Tow_A").rmdir()
+    (rig.source / "Tow_A.set").unlink()
+
+    _, st = sync.sync_project(rig.project)
+    assert st.gone_unsafe == ["Tank/Tow_A"], "it did leave C: before it was safe"
+
+    sync.verify(rig.project, volumes.find_volumes()["xulab-backup-01"], role="backup")
+    st = sync.status(rig.project)
+    assert not st.gone_unsafe, "now that the backup is re-read, the alarm clears"
+    assert "Tank/Tow_A" in st.archived

@@ -4,6 +4,7 @@
     experimentkit storage add <DaVis project> --work xulab-work-01 --backup xulab-backup-01 \\
                               [--qc-mirror <OneDrive folder>]
     experimentkit storage status [--json]
+    experimentkit storage watch [--interval 30]      a screen to leave open
     experimentkit storage sync [--project P] [--dry-run] [--now] [--background] [--no-qc]
     experimentkit storage keep [pattern ...] [--remove]
     experimentkit storage qc [--backfill] [--budget N]
@@ -99,6 +100,22 @@ def print_status(st: sync.ProjectStatus) -> None:
     print(f"  {_qc_summary(p)}")
 
 
+def print_running(project: registry.SyncProject) -> None:
+    """Whether a sync is copying right now -- and so whether a drive may be unplugged."""
+    state = sync.running(project)
+    paused = sync.pause_path(project).is_file()
+    if state and not state.get("stale"):
+        where = f"{state.get('recording', '')} ({state.get('step', '')})".strip()
+        print(f"  SYNC RUNNING: {state.get('stage', '')} {where}".rstrip())
+        print("  do NOT unplug a drive; `experimentkit storage pause` stops it cleanly")
+    elif state and state.get("stale"):
+        print("  a sync stopped without finishing (no such process); the next run resumes it")
+    elif paused:
+        print("  PAUSED: `experimentkit storage resume` to carry on")
+    else:
+        print("  no sync running -- safe to unplug the drives")
+
+
 def _status_json(st: sync.ProjectStatus) -> dict:
     return {
         "project": st.project.name, "source": str(st.project.source),
@@ -156,6 +173,7 @@ def cmd_status(args) -> int:
     else:
         for st in states:
             print_status(st)
+            print_running(st.project)
             print()
     return 1 if any(s.gone_unsafe for s in states) else 0
 
@@ -172,7 +190,8 @@ def cmd_sync(args) -> int:
             _out.append(qc_mod.run_qc(project, files, recs, budget=args.qc_budget))
 
         results, st = sync.sync_project(p, now=args.now, dry_run=args.dry_run, volumes=found,
-                                        run_qc=None if args.no_qc else run_qc)
+                                        run_qc=None if args.no_qc else run_qc,
+                                        phased=args.phased)
         for res in qc_results:
             _print_qc(p.name, res)
             problems += len(res.problems)
@@ -298,6 +317,79 @@ def cmd_keep(args) -> int:
     return 0
 
 
+def _recent(project: registry.SyncProject, volume, minutes: int = 10) -> str:
+    """How much the drive took in the last few minutes, from its own ledger."""
+    import datetime as dt
+
+    if volume is None:
+        return ""
+    since = (dt.datetime.now().astimezone() - dt.timedelta(minutes=minutes)).isoformat()
+    path = volume.root / project.name / ".experimentkit" / "ledger.jsonl"
+    events = []
+    if path.is_file():
+        for line in path.read_text(encoding="utf8", errors="replace").splitlines():
+            if not line.strip():
+                continue
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if event.get("kind") in ("copy", "adopt") and event.get("at", "") >= since:
+                events.append(event)
+    done = sum(e.get("size") or 0 for e in events)
+    if not events:
+        return f"{volume.id}: nothing copied in the last {minutes} min"
+    return (f"{volume.id}: {len(events)} file(s), {_gb(done)} in the last {minutes} min "
+            f"({_gb(done * 60 // minutes)}/h)")
+
+
+def cmd_watch(args) -> int:
+    """A screen to leave open: what the sync is doing, refreshed, until Ctrl-C.
+
+    Written 2026-09-20, when a day of recording filled C: and the only way to see
+    whether the backup was keeping up was to run status by hand.
+    """
+    import os
+    import time
+
+    try:
+        while True:
+            found = volumes.find_volumes()
+            os.system("cls" if os.name == "nt" else "clear")
+            print(f"experimentkit storage watch -- {time.strftime('%H:%M:%S')} "
+                  f"(refreshing every {args.interval}s, Ctrl-C to stop)\n")
+            for p in _projects(args.project):
+                st = sync.status(p, found)
+                print_status(st)
+                print(f"  {_recent(p, st.work)}")
+                if st.backup:
+                    print(f"  {_recent(p, st.backup)}")
+                print_running(p)
+                print()
+            time.sleep(args.interval)
+    except KeyboardInterrupt:
+        print("stopped watching; the sync itself is unaffected")
+    return 0
+
+
+def cmd_pause(args) -> int:
+    """Ask a running sync to stop at the next recording boundary, and stay stopped."""
+    for p in _projects(args.project):
+        sync.pause_path(p).write_text("paused by the user\n", encoding="utf8")
+        state = sync.running(p)
+        live = state and not state.get("stale")
+        print(f"{p.name}: paused"
+              + ("; the running sync will stop after the recording it is on" if live else ""))
+    return 0
+
+
+def cmd_resume(args) -> int:
+    for p in _projects(args.project):
+        sync.pause_path(p).unlink(missing_ok=True)
+        print(f"{p.name}: resumed -- run `experimentkit storage sync` (or wait for the schedule)")
+    return 0
+
+
 def cmd_schedule(args) -> int:
     exe = Path(sys.executable)
     pyw = exe.with_name("pythonw.exe") if exe.with_name("pythonw.exe").exists() else exe
@@ -315,10 +407,16 @@ def cmd_schedule(args) -> int:
         line = f"{quoted(pyw)} -m experimentkit storage {command}"
         return line if _installed() else f"cmd /c cd /d {quoted(repo)} && {line}"
 
-    print("Hourly sync (with QC), and a nightly re-read of the copies, as Windows scheduled")
-    print("tasks. Run these yourself (they change the PC's scheduled tasks):\n")
-    print(f'schtasks /Create /SC HOURLY /TN "experimentkit storage sync" '
-          f'/TR "{task("sync --background")}" /F')
+    print("A sync every 10 minutes (with QC), and a nightly re-read of the copies, as Windows")
+    print("scheduled tasks. Run these yourself (they change the PC's scheduled tasks):\n")
+    # Every ten minutes, not hourly. A sync that finds the project busy does nothing and
+    # waits for the next run, so an hourly schedule can miss every quiet gap in a working
+    # day: on 2026-09-20 a day of recording reached the evening with 470 GB still only on
+    # C:, and no space left to record into. A run with nothing to do costs a directory
+    # walk. --phased carries one recording the whole way, so space is freed without
+    # waiting for the rest of the backlog.
+    print(f'schtasks /Create /SC MINUTE /MO 10 /TN "experimentkit storage sync" '
+          f'/TR "{task("sync --phased --background")}" /F')
     print(f'schtasks /Create /SC DAILY /ST 02:00 /TN "experimentkit storage verify" '
           f'/TR "{task("verify --background --budget-gb 300")}" /F')
     if not _installed():
@@ -360,6 +458,9 @@ def add_storage_parser(sub) -> None:
                    help=f"run even if the project changed in the last {sync.QUIET_MINUTES} min")
     y.add_argument("--background", action="store_true", help="low CPU and disk priority")
     y.add_argument("--no-qc", action="store_true", help="copy only; measure nothing")
+    y.add_argument("--phased", action="store_true",
+                   help="one recording at a time, oldest first, carried all the way to a "
+                        "verified backup -- so space can be freed while the rest still copies")
     y.add_argument("--qc-budget", type=int, default=3,
                    help="new recordings to measure per run (default 3)")
     y.set_defaults(fn=cmd_sync)
@@ -380,6 +481,19 @@ def add_storage_parser(sub) -> None:
     k.add_argument("--remove", action="store_true", help="take these patterns out instead")
     k.add_argument("--project", help="one project by name (default: all)")
     k.set_defaults(fn=cmd_keep)
+
+    w = ssub.add_parser("watch", help="a screen to leave open: progress, refreshed")
+    w.add_argument("--interval", type=int, default=30, help="seconds between refreshes")
+    w.add_argument("--project")
+    w.set_defaults(fn=cmd_watch)
+
+    pz = ssub.add_parser("pause", help="stop a running sync cleanly; it resumes where it stopped")
+    pz.add_argument("--project")
+    pz.set_defaults(fn=cmd_pause)
+
+    rz = ssub.add_parser("resume", help="undo a pause")
+    rz.add_argument("--project")
+    rz.set_defaults(fn=cmd_resume)
 
     r = ssub.add_parser("verify", help="re-read the copies on the drives (resumable)")
     r.add_argument("--project")
