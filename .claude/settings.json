@@ -6,11 +6,22 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"C:/Users/LaVision/Documents/GitHub/Lab-Code-Guide/tools/whatsnew.py\" --project . --mark"
+            "command": "python -c \"import os,runpy,sys;d=os.environ.get('CLAUDE_PROJECT_DIR','.');c=[os.path.join(d,'tools','whatsnew.py'),os.path.join(d,'..','Lab-Code-Guide','tools','whatsnew.py')];p=next((x for x in c if os.path.isfile(x)),None);p or sys.exit(0);sys.path.insert(0,os.path.dirname(os.path.abspath(p)));sys.argv=[p]+['--project', '.', '--mark'];runpy.run_path(p,run_name='__main__')\""
           },
           {
             "type": "command",
-            "command": "python \"C:/Users/LaVision/Documents/GitHub/Lab-Code-Guide/tools/reconcile.py\" \"C:/Users/LaVision/Documents/GitHub/Tool-ExperimentManager\" --quiet"
+            "command": "python -c \"import os,runpy,sys;d=os.environ.get('CLAUDE_PROJECT_DIR','.');c=[os.path.join(d,'tools','reconcile.py'),os.path.join(d,'..','Lab-Code-Guide','tools','reconcile.py')];p=next((x for x in c if os.path.isfile(x)),None);p or sys.exit(0);sys.path.insert(0,os.path.dirname(os.path.abspath(p)));sys.argv=[p]+['.', '--quiet'];runpy.run_path(p,run_name='__main__')\""
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -c \"import os,runpy,sys;d=os.environ.get('CLAUDE_PROJECT_DIR','.');c=[os.path.join(d,'tools','guard_heredoc.py'),os.path.join(d,'..','Lab-Code-Guide','tools','guard_heredoc.py')];p=next((x for x in c if os.path.isfile(x)),None);p or sys.exit(0);sys.path.insert(0,os.path.dirname(os.path.abspath(p)));sys.argv=[p]+[];runpy.run_path(p,run_name='__main__')\""
           }
         ]
       }
