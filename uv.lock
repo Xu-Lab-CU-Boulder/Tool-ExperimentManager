@@ -29,10 +29,10 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "markertracker", editable = "../GUI-TrackAnything" },
+    { name = "markertracker", editable = "../Tool-TrackAnything" },
     { name = "numpy", specifier = ">=1.24" },
     { name = "opencv-python", specifier = ">=4.8,<5" },
-    { name = "projectkit", editable = "../ProjectManager" },
+    { name = "projectkit", editable = "../Tool-ProjectManager" },
 ]
 
 [package.metadata.requires-dev]
@@ -50,7 +50,7 @@ wheels = [
 [[package]]
 name = "markertracker"
 version = "0.1.0"
-source = { editable = "../GUI-TrackAnything" }
+source = { editable = "../Tool-TrackAnything" }
 dependencies = [
     { name = "numpy" },
     { name = "opencv-python" },
@@ -192,7 +192,7 @@ wheels = [
 [[package]]
 name = "projectkit"
 version = "0.1.0"
-source = { editable = "../ProjectManager" }
+source = { editable = "../Tool-ProjectManager" }
 
 [package.metadata]
 requires-dist = [

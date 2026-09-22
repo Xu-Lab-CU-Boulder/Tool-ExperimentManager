@@ -33,8 +33,8 @@ dev = ["pytest>=8"]
 # Sibling repositories, resolved by relative path: every repo is cloned side by
 # side under one parent, and uv fails loudly if one is missing rather than
 # quietly installing something else.
-projectkit = { path = "../ProjectManager", editable = true }
-markertracker = { path = "../GUI-TrackAnything", editable = true }
+projectkit = { path = "../Tool-ProjectManager", editable = true }
+markertracker = { path = "../Tool-TrackAnything", editable = true }
 
 [build-system]
 requires = ["setuptools>=68"]
