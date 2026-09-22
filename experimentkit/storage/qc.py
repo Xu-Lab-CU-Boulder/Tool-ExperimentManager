@@ -15,7 +15,7 @@ The folder is snapshotted to the drives with the project, and mirrored to
 OneDrive (sync.mirror_qc). Its databases are JSON Lines, append-only.
 
 **Budget.** Measuring a recording reads ~10 images and takes a minute or two,
-so an hourly run measures at most `budget` new recordings and leaves the rest
+so each sync run measures at most `budget` new recordings and leaves the rest
 for the next run. `backfill` measures recordings that have already left C:,
 reading them from the work drive.
 """

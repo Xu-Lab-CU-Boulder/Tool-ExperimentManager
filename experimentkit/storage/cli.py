@@ -9,7 +9,7 @@
     experimentkit storage keep [pattern ...] [--remove]
     experimentkit storage qc [--backfill] [--budget N]
     experimentkit storage verify [--project P] [--budget-gb 200] [--background]
-    experimentkit storage schedule          prints the hourly scheduled-task command
+    experimentkit storage schedule          prints the scheduled-task commands (sync every 10 min, nightly verify)
 """
 
 from __future__ import annotations
@@ -65,7 +65,7 @@ def print_status(st: sync.ProjectStatus) -> None:
     print(f"  work:   {_drive(st.work, p.work)}")
     print(f"  backup: {_drive(st.backup, p.backup)}")
     if not st.quiet:
-        print(f"  busy:   last change {st.minutes_since_change:.0f} min ago -- the hourly sync "
+        print(f"  busy:   last change {st.minutes_since_change:.0f} min ago -- the scheduled sync "
               "waits for a quiet project")
     for rel in st.gone_unsafe:
         print(f"  !! {rel} left C: before it was safe to delete -- check the drives now")
@@ -524,5 +524,5 @@ def add_storage_parser(sub) -> None:
     r.add_argument("--background", action="store_true", help="low CPU and disk priority")
     r.set_defaults(fn=cmd_verify)
 
-    c = ssub.add_parser("schedule", help="print the commands for the hourly and nightly tasks")
+    c = ssub.add_parser("schedule", help="print the commands for the 10-minute sync and nightly verify tasks")
     c.set_defaults(fn=cmd_schedule)
