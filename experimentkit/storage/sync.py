@@ -560,6 +560,22 @@ def _phased(project: SyncProject, work: Volume, backup: Volume | None,
     recording is carried the whole way and marked deletable before the next starts.
     """
     results: list[StageResult] = []
+    # The project files first -- Properties (every calibration), the .exp, the QC folder.
+    # They belong to no recording, so the loop below never carried them: from 2026-09-20
+    # to 10-02 none of them left C:. They are small and the hardest to recreate.
+    owned_all = {rel for r in recs for rel in r.files}
+    other = {rel for rel in files if rel not in owned_all}
+    if other:
+        if not dry_run:
+            _mark_running(project, recording="project files", step="",
+                          stage=f"C: -> {work.id}", bytes=sum(files[r].size for r in other))
+        to_work = sync_to_work(project, work, files, recs, dry_run=dry_run, only=other)
+        to_work.stage = f"project files: C: -> {work.id}"
+        results.append(to_work)
+        if backup is not None:
+            to_backup = sync_to_backup(project, work, backup, dry_run=dry_run, only=other)
+            to_backup.stage = f"project files: {work.id} -> {backup.id}"
+            results.append(to_backup)
     wl = Ledger(work.root / project.name)
     todo = sorted(recs, key=lambda r: r.newest_ns)
     for n, rec in enumerate(todo, 1):

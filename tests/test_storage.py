@@ -457,6 +457,17 @@ def test_a_phased_sync_finishes_one_recording_before_starting_the_next(rig):
     assert states(rig.project)["Tow_A"] == sync.SAFE, "deletable without waiting for the rest"
 
 
+def test_a_phased_sync_also_carries_the_project_files(rig):
+    """Phased copied only files that belong to a recording. Properties (every calibration),
+    the .exp and the QC folder belong to none, so from 2026-09-20 they never left C: --
+    281 files, the whole calibration history after 09-16, found 2026-10-02."""
+    _, after = sync.sync_project(rig.project, phased=True)
+    for drive in (rig.g, rig.f):
+        assert (drive / "Tank" / "Properties" / "Calibration" / "Calibration.xml").exists()
+        assert (drive / "Tank.exp").exists()
+    assert after.other_pending == 0
+
+
 def test_a_paused_sync_stops_between_recordings_and_resumes(rig):
     sync.pause_path(rig.project).write_text("paused\n", encoding="utf8")
     results, _ = sync.sync_project(rig.project, phased=True)
