@@ -615,6 +615,51 @@ def _phased(project: SyncProject, work: Volume, backup: Volume | None,
     return results
 
 
+USAGE_LOG = "storage_usage.jsonl"
+USAGE_EVERY_S = 30 * 60
+
+
+def record_usage(project: SyncProject, volumes: dict[str, Volume]) -> bool:
+    """Append free space on C: and every connected drive to a log beside the registry, at
+    most every 30 min -- so the rate the drives fill can be plotted (asked for 2026-10-02).
+    Per-machine state, like the registry: never on C:'s project side, which a sync only
+    reads. Never raises: a failed log line must not stop a backup."""
+    try:
+        log = usage_path(project)
+        if log.is_file() and time.time() - log.stat().st_mtime < USAGE_EVERY_S:
+            return False
+        drives = {"C:": project.source}
+        drives.update({vid: v.root for vid, v in volumes.items()})
+        entry = {"at": dt.datetime.now().isoformat(timespec="seconds"), "drives": {}}
+        for label, root in drives.items():
+            u = shutil.disk_usage(root)
+            entry["drives"][label] = {"total": u.total, "used": u.used, "free": u.free}
+        log.parent.mkdir(parents=True, exist_ok=True)
+        with log.open("a", encoding="utf8") as f:
+            f.write(json.dumps(entry) + "\n")
+        return True
+    except OSError:
+        return False
+
+
+def usage_path(project: SyncProject) -> Path:
+    from .registry import registry_path
+    return registry_path().parent / f"{project.name}.{USAGE_LOG}"
+
+
+def read_usage(project: SyncProject) -> list[dict]:
+    log = usage_path(project)
+    if not log.is_file():
+        return []
+    out = []
+    for line in log.read_text(encoding="utf8").splitlines():
+        try:
+            out.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return out
+
+
 def sync_project(project: SyncProject, *, now: bool = False, dry_run: bool = False,
                  volumes: dict[str, Volume] | None = None, run_qc=None,
                  phased: bool = False) -> tuple[list[StageResult], ProjectStatus]:
@@ -628,6 +673,8 @@ def sync_project(project: SyncProject, *, now: bool = False, dry_run: bool = Fal
     files = inventory(project.source)
     before = status(project, volumes, files)
     results: list[StageResult] = []
+    if not dry_run:
+        record_usage(project, volumes)
 
     if pause_path(project).is_file():
         # a pause stops everything, scheduled runs included -- not just the copying

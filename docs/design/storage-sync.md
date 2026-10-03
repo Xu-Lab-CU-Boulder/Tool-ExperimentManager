@@ -249,6 +249,11 @@ experimentkit storage add <DaVis project>      register a source (asks which vol
 experimentkit storage volume init <drive>      write VOLUME.toml to a new drive
 experimentkit storage sync [--project P] [--dry-run] [--now]
 experimentkit storage status [--json]
+experimentkit storage drives                    free space on C:, work and backup (added 2026-10-02)
+experimentkit storage deletable [--paths]       only the verified-safe recordings (added 2026-10-02)
+experimentkit storage progress                  the running copy and how far it has got (2026-10-02)
+experimentkit storage usage [--plot PNG]        free space over time; each sync logs it at most every
+                                                30 min to <registry dir>/<project>.storage_usage.jsonl
 experimentkit storage verify [--full]           background re-read, resumable
 experimentkit storage schedule install          hourly Windows scheduled task (low priority)
 ```

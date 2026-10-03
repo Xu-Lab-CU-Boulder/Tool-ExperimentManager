@@ -380,6 +380,68 @@ def test_cli_status_and_dry_run(rig, capsys):
     assert "on C: only" in capsys.readouterr().out
 
 
+def test_drives_shows_free_space_on_c_and_every_connected_drive(rig, capsys):
+    """Asked for 2026-10-02: how much room is left on C:, the work and the backup drive."""
+    assert main(["storage", "drives"]) == 0
+    out = capsys.readouterr().out
+    assert "C:" in out or "source" in out
+    assert "xulab-work-01" in out and "xulab-backup-01" in out
+    assert out.count("free") >= 3 and "% free" in out
+
+
+def test_deletable_lists_only_what_both_drives_hold(rig, capsys):
+    """Asked for 2026-10-02: just the list of what can go, with full paths for DaVis."""
+    assert main(["storage", "deletable"]) == 0
+    assert "nothing is safe to delete" in capsys.readouterr().out
+
+    sync.sync_project(rig.project)
+    sync.verify(rig.project, volumes.find_volumes()["xulab-backup-01"], role="backup")
+    assert main(["storage", "deletable", "--paths"]) == 0
+    out = capsys.readouterr().out
+    assert "Tow_A" in out and str(rig.source.parent) in out, "full C: paths"
+    assert "delete them in DaVis" in out
+
+    main(["storage", "keep", "Tow_A"])
+    capsys.readouterr()
+    main(["storage", "deletable"])
+    assert "Tow_A" not in capsys.readouterr().out, "a kept recording is never offered"
+
+
+def test_a_running_copy_reports_how_far_it_has_got(rig, capsys):
+    """Asked for 2026-10-02: the state and progress of a copy, not just its name."""
+    sync.sync_project(rig.project)  # Tow_A is now whole on the work drive
+    rec = next(r for r in sync.recordings(rig.project.source, sync.inventory(rig.project.source))
+               if r.name == "Tow_A")
+    sync._mark_running(rig.project, recording="Tow_A", step="1 of 2",
+                       stage="C: -> xulab-work-01", bytes=rec.size)
+    assert main(["storage", "progress"]) == 0
+    out = capsys.readouterr().out
+    assert "Tow_A" in out and "100%" in out and "1 of 2" in out
+    sync._clear_running(rig.project)
+    assert main(["storage", "progress"]) == 0
+    assert "no sync running" in capsys.readouterr().out
+
+
+def test_drive_space_is_logged_over_time_and_plotted(rig, capsys, tmp_path):
+    """Asked for 2026-10-02: free space against time, to see how fast the drives fill.
+    Each sync logs it (at most every 30 min) beside the registry -- never on C:."""
+    sync.sync_project(rig.project)
+    sync.sync_project(rig.project)
+    log = sync.usage_path(rig.project)
+    assert not (rig.project.qc_dir / "storage_usage.jsonl").exists(), "C: is only read"
+    lines = log.read_text(encoding="utf8").splitlines()
+    assert len(lines) == 1, "throttled: two runs a minute apart log once"
+    import json
+    entry = json.loads(lines[0])
+    assert {"xulab-work-01", "xulab-backup-01"} <= set(entry["drives"])
+    assert all({"total", "free"} <= set(d) for d in entry["drives"].values())
+
+    png = tmp_path / "usage.png"
+    assert main(["storage", "usage", "--plot", str(png)]) == 0
+    assert png.is_file() and png.stat().st_size > 0
+    assert "free" in capsys.readouterr().out
+
+
 # -- QC with the sync ---------------------------------------------------------------------------
 
 def _fake_measure(calls):

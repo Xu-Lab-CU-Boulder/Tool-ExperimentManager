@@ -4,6 +4,10 @@
     experimentkit storage add <DaVis project> --work xulab-work-01 --backup xulab-backup-01 \\
                               [--qc-mirror <OneDrive folder>]
     experimentkit storage status [--json]
+    experimentkit storage drives                     free space on C:, the work and the backup drive
+    experimentkit storage deletable [--paths]        only what is safe to delete from C:
+    experimentkit storage progress                   the running copy: which recording, how far
+    experimentkit storage usage [--plot PNG]         free space over time per drive, GB/day
     experimentkit storage watch [--interval 30]      a screen to leave open
     experimentkit storage sync [--project P] [--dry-run] [--now] [--background] [--no-qc]
     experimentkit storage keep [pattern ...] [--remove]
@@ -101,6 +105,40 @@ def print_status(st: sync.ProjectStatus) -> None:
     print(f"  {_qc_summary(p)}")
 
 
+def _copy_progress(project: registry.SyncProject, state: dict) -> str:
+    """How far the running copy has got: bytes of the current recording already on the
+    destination drive (finished files and the growing .partial), from the drive itself."""
+    import datetime as dt
+    import time
+
+    parts = []
+    try:
+        started = dt.datetime.strptime(state.get("at", ""), "%Y%m%d-%H%M%S")
+        parts.append(f"on this step {(dt.datetime.now() - started).total_seconds() / 60:.0f} min")
+    except ValueError:
+        pass
+    stage, rec, total = state.get("stage", ""), state.get("recording", ""), state.get("bytes") or 0
+    dest_id = stage.split("->")[-1].strip() if "->" in stage else ""
+    vol = volumes.find_volumes().get(dest_id)
+    if vol and rec and rec != "project files" and total:
+        rel = f"{project.source.name}/{rec}"
+        rel = Ledger(vol.root / project.name).source_map.get(rel, rel) if dest_id == project.work else \
+            Ledger(project_work_root(project) / project.name).source_map.get(rel, rel)
+        folder = vol.root / rel
+        have = sum(f.stat().st_size for f in folder.rglob("*") if f.is_file()) if folder.is_dir() else 0
+        have += (vol.root / f"{rel}.set").stat().st_size if (vol.root / f"{rel}.set").is_file() else 0
+        parts.insert(0, f"{min(100, 100 * have / total):.0f}% of this recording "
+                        f"({_gb(have)} of {_gb(total)}) on {dest_id}")
+    elif stage.startswith("re-reading"):
+        parts.insert(0, "re-reading the backup copy to verify it")
+    return ", ".join(parts)
+
+
+def project_work_root(project: registry.SyncProject):
+    vol = volumes.find_volumes().get(project.work)
+    return vol.root if vol else Path(".")
+
+
 def print_running(project: registry.SyncProject) -> None:
     """Whether a sync is copying right now -- and so whether a drive may be unplugged."""
     state = sync.running(project)
@@ -108,6 +146,9 @@ def print_running(project: registry.SyncProject) -> None:
     if state and not state.get("stale"):
         where = f"{state.get('recording', '')} ({state.get('step', '')})".strip()
         print(f"  SYNC RUNNING: {state.get('stage', '')} {where}".rstrip())
+        progress = _copy_progress(project, state)
+        if progress:
+            print(f"  progress: {progress}")
         print("  do NOT unplug a drive; `experimentkit storage pause` stops it cleanly")
     elif state and state.get("stale"):
         print("  a sync stopped without finishing (no such process); the next run resumes it")
@@ -177,6 +218,112 @@ def cmd_status(args) -> int:
             print_running(st.project)
             print()
     return 1 if any(s.gone_unsafe for s in states) else 0
+
+
+def _space_line(label: str, root) -> str:
+    import shutil
+    u = shutil.disk_usage(root)
+    return (f"  {label:<34} {_gb(u.free):>11} free of {_gb(u.total):>11}"
+            f"   ({100 * u.free / u.total:4.1f} % free)")
+
+
+def cmd_drives(args) -> int:
+    """Free space on each project's C: drive and on every labelled drive that is plugged in."""
+    projects = registry.load_projects()
+    seen = set()
+    for p in projects:
+        drive = Path(p.source).drive or str(Path(p.source).anchor)
+        if drive not in seen:
+            seen.add(drive)
+            print(_space_line(f"{drive or 'source'} (DaVis projects)", p.source))
+    found = volumes.find_volumes()
+    for vol_id, vol in sorted(found.items()):
+        print(_space_line(f"{vol_id} ({vol.root}, {vol.purpose})", vol.root))
+    wanted = {i for p in projects for i in (p.work, p.backup) if i}
+    for vol_id in sorted(wanted - set(found)):
+        print(f"  {vol_id:<34} not connected")
+    return 0
+
+
+def cmd_progress(args) -> int:
+    """Just the running copy: what, which step, how far."""
+    for p in _projects(args.project):
+        print(p.name)
+        print_running(p)
+    return 0
+
+
+def cmd_usage(args) -> int:
+    """Free space over time on each drive, from the log every sync writes; rate per day."""
+    import datetime as dt
+
+    for p in _projects(args.project):
+        rows = sync.read_usage(p)
+        if not rows:
+            print(f"{p.name}: no usage logged yet (each sync logs it, at most every 30 min)")
+            continue
+        first, last = rows[0], rows[-1]
+        t0 = dt.datetime.fromisoformat(first["at"])
+        t1 = dt.datetime.fromisoformat(last["at"])
+        days = max((t1 - t0).total_seconds() / 86400, 1e-9)
+        print(f"{p.name}: {len(rows)} readings, {first['at']} to {last['at']}")
+        for label, d in sorted(last["drives"].items()):
+            line = f"  {label:<18} {_gb(d['free']):>11} free of {_gb(d['total']):>11}"
+            if label in first["drives"] and len(rows) > 1:
+                rate = (first["drives"][label]["free"] - d["free"]) / days
+                line += f"   using {_gb(rate)}/day"
+                if rate > 0:
+                    line += f", full in ~{d['free'] / rate:.0f} days"
+            print(line)
+        if args.plot:
+            _plot_usage(p.name, rows, Path(args.plot))
+            print(f"  plot: {args.plot}")
+    return 0
+
+
+def _plot_usage(name: str, rows: list[dict], out: Path) -> None:
+    import datetime as dt
+
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    labels = sorted({k for r in rows for k in r["drives"]})
+    fig, ax = plt.subplots(figsize=(8, 4), dpi=150)
+    for label in labels:
+        pts = [(dt.datetime.fromisoformat(r["at"]), r["drives"][label]["free"] / 1e9)
+               for r in rows if label in r["drives"]]
+        ax.plot(*zip(*pts), marker="o", ms=3, lw=1.5, label=label)
+    ax.set_ylabel("free space [GB]")
+    ax.set_title(f"{name}: free space on each drive")
+    ax.grid(alpha=0.3)
+    ax.legend(frameon=False)
+    fig.autofmt_xdate()
+    fig.tight_layout()
+    out.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out)
+    plt.close(fig)
+
+
+def cmd_deletable(args) -> int:
+    """Only the recordings both drives hold, verified -- what can go from C:."""
+    found = volumes.find_volumes()
+    total = 0
+    for p in _projects(args.project):
+        st = sync.status(p, found)
+        safe = st.by_state(sync.SAFE)
+        if not safe:
+            print(f"{p.name}: nothing is safe to delete from C:")
+            continue
+        size = sum(r.size for r, _ in safe)
+        total += size
+        print(f"{p.name}: {len(safe)} recording(s), {_gb(size)} -- delete them in DaVis")
+        for r, _ in safe:
+            name = str(Path(p.source).parent / r.rel) if args.paths else r.name
+            print(f"  {_gb(r.size):>10}  {name}")
+    if total:
+        print(f"total {_gb(total)}")
+    return 0
 
 
 def cmd_sync(args) -> int:
@@ -457,6 +604,23 @@ def add_storage_parser(sub) -> None:
     s.add_argument("--project")
     s.add_argument("--json", action="store_true")
     s.set_defaults(fn=cmd_status)
+
+    dr = ssub.add_parser("drives", help="free space on C: and on every connected work/backup drive")
+    dr.set_defaults(fn=cmd_drives)
+
+    pg = ssub.add_parser("progress", help="the running copy: which recording, which step, how far")
+    pg.add_argument("--project")
+    pg.set_defaults(fn=cmd_progress)
+
+    us = ssub.add_parser("usage", help="free space over time on each drive, and the rate it is used")
+    us.add_argument("--project")
+    us.add_argument("--plot", help="also save a PNG of free space against time to this path")
+    us.set_defaults(fn=cmd_usage)
+
+    de = ssub.add_parser("deletable", help="only the recordings safe to delete from C: (both copies verified)")
+    de.add_argument("--project")
+    de.add_argument("--paths", action="store_true", help="full C: paths instead of names")
+    de.set_defaults(fn=cmd_deletable)
 
     y = ssub.add_parser("sync", help="QC what is new, then copy C: -> work -> backup")
     y.add_argument("--project")

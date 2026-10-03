@@ -120,6 +120,10 @@ experimentkit storage add C:\...\Project_Tomo_Setup --work xulab-work-01 --backu
 experimentkit storage sync --phased   # one recording at a time, oldest first, to a verified backup
 experimentkit storage verify          # re-read the copies (makes recordings deletable)
 experimentkit storage status          # what is where, what can go from C:, safe to unplug?
+experimentkit storage drives          # free space on C:, the work drive and the backup drive
+experimentkit storage deletable --paths   # only what is safe to delete from C: (delete in DaVis)
+experimentkit storage progress        # the running copy: recording, step n of N, % on the destination
+experimentkit storage usage --plot usage.png   # free space over time per drive, GB/day, days to full
 experimentkit storage watch           # the same, refreshed -- a screen to leave open
 experimentkit storage pause | resume  # stop cleanly at the next recording; carry on later
 experimentkit storage keep "Volume_Self_Cal/*"   # never offer these for deletion
