@@ -272,7 +272,7 @@ def cmd_usage(args) -> int:
             if label in first["drives"] and len(rows) > 1:
                 rate = (first["drives"][label]["free"] - d["free"]) / days
                 line += f"   using {_gb(rate)}/day"
-                if rate > 0:
+                if rate > 0 and d["free"] / rate < 3650:  # a flat line has no useful "full in"
                     line += f", full in ~{d['free'] / rate:.0f} days"
             print(line)
         if args.plot:
