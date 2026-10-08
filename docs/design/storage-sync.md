@@ -92,7 +92,7 @@ Project_Hula_Hoop/
 Facts the design depends on:
 
 - **A recording is two things**: the folder and the `.set` beside it. Copy one without the other and
-  DaVis drops the recording from its project list (the fault `daviskit.io.Project.audit_sets` catches).
+  DaVis drops the recording from its project list (the fault `daviskit.io.project.Project.audit_sets` catches).
 - **`SetTime` inside the `.set` survives a rename in DaVis**, so it is the recording's identity.
 - **Processed results appear inside recordings long after they were recorded.** A recording is never
   "finished" for good; the sync copies what is new.
