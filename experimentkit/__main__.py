@@ -182,6 +182,8 @@ def cmd_camera_temps(args) -> int:
     # logon, so it records the warm-up from power-on.
     import time
 
+    if args.plot and args.log:
+        _launch_live_plot(args.log)
     end = time.monotonic() + args.hours * 3600
     print(f"reading every {args.every:g} s until DaVis starts (at most {args.hours:g} h); "
           "Ctrl+C to stop")
@@ -197,6 +199,23 @@ def cmd_camera_temps(args) -> int:
     except KeyboardInterrupt:
         print("stopped.")
     return 0
+
+
+def _launch_live_plot(log: str) -> None:
+    """Open daviskit's live warm-up window on the log, as its own process.
+
+    It only reads the log, never the cameras, so it can stay open after DaVis starts.
+    """
+    import shutil
+    import subprocess
+
+    exe = shutil.which("daviskit")
+    if not exe:
+        print("note: daviskit is not installed, so no live plot "
+              "(daviskit camera-temps <log> --follow)", file=sys.stderr)
+        return
+    subprocess.Popen([exe, "camera-temps", log, "--follow"],
+                     creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0))
 
 
 def _camera_temps_once(args) -> int:
@@ -253,6 +272,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--force", action="store_true", help="read even while DaVis is running")
     p.add_argument("--every", type=float, default=0,
                    help="keep reading every N seconds until DaVis starts (warm-up log)")
+    p.add_argument("--plot", action="store_true",
+                   help="with --every and --log: also open daviskit's live warm-up plot")
     p.add_argument("--hours", type=float, default=4,
                    help="with --every: stop after this long even if DaVis never starts")
     p.set_defaults(fn=cmd_camera_temps)
