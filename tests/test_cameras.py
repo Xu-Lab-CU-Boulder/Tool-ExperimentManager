@@ -78,3 +78,15 @@ def test_cli_refuses_while_davis_runs(monkeypatch, capsys):
     monkeypatch.setattr(cli, "_davis_running", lambda: True)
     assert cli.main(["cameras", "temps"]) == 2
     assert "DaVis is running" in capsys.readouterr().err
+
+
+def test_watch_stops_when_davis_starts(monkeypatch, capsys):
+    from experimentkit import __main__ as cli
+
+    states = iter([False, False, True])  # free at start, one reading, then DaVis appears
+    monkeypatch.setattr(cli, "_davis_running", lambda: next(states))
+    calls = []
+    monkeypatch.setattr(cli, "_camera_temps_once", lambda args: calls.append(1) or 0)
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    assert cli.main(["cameras", "temps", "--every", "60"]) == 0
+    assert calls == [1] and "DaVis started" in capsys.readouterr().out

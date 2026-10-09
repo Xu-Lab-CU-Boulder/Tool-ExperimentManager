@@ -169,13 +169,39 @@ def _davis_running() -> bool:
 
 
 def cmd_camera_temps(args) -> int:
-    from . import cameras
-
     if _davis_running() and not args.force:
         print("error: DaVis is running. Close it first: opening a camera DaVis is "
               "acquiring from can make it lose the camera. (--force to read anyway.)",
               file=sys.stderr)
         return 2
+    if not args.every:
+        return _camera_temps_once(args)
+
+    # Watch: read every --every seconds until DaVis starts (checked every 2 s, so a
+    # reading is never begun once DaVis is up) or --hours runs out. Meant to start at
+    # logon, so it records the warm-up from power-on.
+    import time
+
+    end = time.monotonic() + args.hours * 3600
+    print(f"reading every {args.every:g} s until DaVis starts (at most {args.hours:g} h); "
+          "Ctrl+C to stop")
+    try:
+        while time.monotonic() < end:
+            _camera_temps_once(args)
+            next_at = time.monotonic() + args.every
+            while time.monotonic() < min(next_at, end):
+                if _davis_running():
+                    print("DaVis started: stopped reading the cameras.")
+                    return 0
+                time.sleep(2)
+    except KeyboardInterrupt:
+        print("stopped.")
+    return 0
+
+
+def _camera_temps_once(args) -> int:
+    from . import cameras
+
     try:
         readings = cameras.read_all(args.cti)
     except RuntimeError as exc:
@@ -225,6 +251,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="GenTL producer to use (default: DaVis's own Coaxlink .cti)")
     p.add_argument("--json", action="store_true", help="print the rows as JSON")
     p.add_argument("--force", action="store_true", help="read even while DaVis is running")
+    p.add_argument("--every", type=float, default=0,
+                   help="keep reading every N seconds until DaVis starts (warm-up log)")
+    p.add_argument("--hours", type=float, default=4,
+                   help="with --every: stop after this long even if DaVis never starts")
     p.set_defaults(fn=cmd_camera_temps)
 
     from .storage.cli import add_storage_parser
