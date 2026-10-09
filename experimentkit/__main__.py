@@ -169,6 +169,14 @@ def _davis_running() -> bool:
 
 
 def cmd_camera_temps(args) -> int:
+    if args.every and not args.force:
+        # Started right after closing DaVis: give it up to 2 min to finish exiting.
+        import time
+
+        for _ in range(60):
+            if not _davis_running():
+                break
+            time.sleep(2)
     if _davis_running() and not args.force:
         print("error: DaVis is running. Close it first: opening a camera DaVis is "
               "acquiring from can make it lose the camera. (--force to read anyway.)",
