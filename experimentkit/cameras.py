@@ -1,21 +1,24 @@
 """Camera temperatures, read straight from the cameras over GenTL.
 
     experimentkit cameras temps                      print every camera's temperatures
-    experimentkit cameras temps --log temps.jsonl    ...and append one row per reading
+    experimentkit cameras temps --log temps.jsonl    ...and append one row per camera
 
 DaVis can store a camera temperature in each image, but the switch is hidden on
 the PIV workstation, so this reads it the other way: through the frame grabber's
-GenTL producer (Euresys eGrabber for the CoaXPress cameras), the way any GenICam
-tool would. **Close DaVis first.** A second program opening a camera that DaVis
-is acquiring from can make DaVis lose it.
+GenTL producer, the way any GenICam tool would. **Close DaVis first.** A second
+program opening a camera that DaVis is acquiring from can make DaVis lose it.
 
-The camera is opened read/write so a temperature selector can be stepped through
-(sensor, mainboard, ...); the selector is put back as it was found. Nothing else
-is written.
+The producer is **DaVis's own** Coaxlink `.cti` by default. The Coaxlink driver
+on the PIV workstation is the 2020 one DaVis 10.2.1 needs; the newer standalone
+eGrabber (and its Python package) refuse to open against it, and the driver must
+not be updated. `harvesters` is a generic GenTL consumer, so it works with the
+old producer as it is.
 
-Needs the `egrabber` package, which ships with eGrabber rather than on PyPI:
+The camera is opened read/write so the temperature selector can be stepped
+through (Mainboard, Power, FPGA, Imager on the CX-16s); it is put back as it was
+found. Nothing else is written.
 
-    pip install "C:/Program Files/Euresys/eGrabber/python/egrabber-<version>-py2.py3-none-any.whl"
+Needs `harvesters` (and `genicam`), from PyPI.
 """
 
 from __future__ import annotations
@@ -31,9 +34,11 @@ SELECTOR = "DeviceTemperatureSelector"
 
 IDENTITY = ("DeviceVendorName", "DeviceModelName", "DeviceSerialNumber", "DeviceUserID")
 
-EGRABBER_HINT = ("the egrabber package is not installed. It ships with eGrabber:\n"
-                 '  pip install "C:/Program Files/Euresys/eGrabber/python/'
-                 'egrabber-<version>-py2.py3-none-any.whl"')
+#: The producer DaVis itself uses for the CoaXPress cameras (CX-16s).
+DAVIS_COAXLINK_CTI = Path(
+    r"C:\DaVis_10.2.1.90613_Parker\win64\Hardware\Cameras\CoaXPress\cti\x86_64\coaxlink.cti")
+
+HARVESTERS_HINT = "harvesters is not installed:  pip install harvesters genicam"
 
 
 @dataclass
@@ -53,18 +58,45 @@ class CameraReading:
         return f"{name} #{self.serial}" if self.serial else name
 
 
+class NodeMapRemote:
+    """A GenICam node map (genicam / harvesters) behind a small get/set/features face."""
+
+    def __init__(self, node_map):
+        self.nm = node_map
+
+    def features(self) -> list[str]:
+        return [n.node.name for n in self.nm.nodes]
+
+    def get(self, feature, dtype=None):
+        value = self.nm.get_node(feature).value
+        return dtype(value) if dtype else value
+
+    def set(self, feature, value) -> None:
+        self.nm.get_node(feature).value = value
+
+    def entries(self, feature) -> list[str]:
+        return list(self.nm.get_node(feature).symbolics)
+
+
 def _safe(remote, feature, dtype=None):
     try:
-        return remote.get(feature, dtype) if dtype else remote.get(feature)
+        return remote.get(feature, dtype)
     except Exception:
         return None
 
 
-def read_remote(remote, index: int = 0) -> CameraReading:
-    """Read identity and every temperature a camera's remote module exposes.
+def _is_extra_temperature(name: str) -> bool:
+    """A vendor feature like SensorTemperature -- not the SFNC pair, nor the
+    register/converter/enum-entry nodes a node map exposes under them."""
+    return (name not in (TEMPERATURE, SELECTOR) and name.endswith("Temperature")
+            and not name.startswith(("EnumEntry_", "has")))
 
-    `remote` is anything with eGrabber's `get(feature[, dtype])`, `set(feature, value)`
-    and `features()`; tests pass a fake.
+
+def read_remote(remote, index: int = 0) -> CameraReading:
+    """Read identity and every temperature a camera's remote device exposes.
+
+    `remote` needs `get(feature[, dtype])`, `set(feature, value)`, `features()`
+    and `entries(enum_feature)`; tests pass a fake.
     """
     ident = [_safe(remote, f, str) or "" for f in IDENTITY]
     reading = CameraReading(index, *ident)
@@ -77,14 +109,14 @@ def read_remote(remote, index: int = 0) -> CameraReading:
     if SELECTOR in names:
         original = _safe(remote, SELECTOR, str)
         try:
-            for entry in _enum_entries(remote, SELECTOR):
+            for entry in remote.entries(SELECTOR):
                 try:
                     remote.set(SELECTOR, entry)
                 except Exception:
                     continue
                 value = _safe(remote, TEMPERATURE, float)
                 if value is not None:
-                    reading.temperatures_c[entry] = float(value)
+                    reading.temperatures_c[entry] = value
         finally:
             if original:
                 try:
@@ -94,48 +126,55 @@ def read_remote(remote, index: int = 0) -> CameraReading:
     elif TEMPERATURE in names:
         value = _safe(remote, TEMPERATURE, float)
         if value is not None:
-            reading.temperatures_c["Device"] = float(value)
+            reading.temperatures_c["Device"] = value
 
-    # Vendor-specific extras (e.g. SensorTemperature): any other readable float
-    # whose name says temperature.
-    for name in sorted(names):
-        if name in (TEMPERATURE, SELECTOR) or "temperature" not in name.lower():
-            continue
+    for name in sorted(n for n in names if _is_extra_temperature(n)):
         value = _safe(remote, name, float)
-        if isinstance(value, (int, float)):
-            reading.temperatures_c[name] = float(value)
+        if value is not None:
+            reading.temperatures_c[name] = value
 
     if not reading.temperatures_c:
         reading.problem = "no temperature feature found"
     return reading
 
 
-def _enum_entries(remote, feature: str) -> list[str]:
-    from egrabber import query  # imported here: tests never reach it
-
-    return list(remote.get(query.enum_entries(feature), list) or [])
+def default_cti() -> str:
+    if DAVIS_COAXLINK_CTI.exists():
+        return str(DAVIS_COAXLINK_CTI)
+    raise RuntimeError(f"DaVis's Coaxlink producer is not at {DAVIS_COAXLINK_CTI}; pass --cti")
 
 
 def read_all(cti: str | None = None) -> list[CameraReading]:
-    """Open every camera the GenTL producer can see and read its temperatures."""
+    """Open every camera the producer can see and read its temperatures.
+
+    Empty grabber ports (they list as devices but cannot be opened) are skipped.
+    """
     try:
-        from egrabber import EGenTL, EGrabber, EGrabberDiscovery
+        from harvesters.core import Harvester
     except ImportError as exc:
-        raise RuntimeError(EGRABBER_HINT) from exc
+        raise RuntimeError(HARVESTERS_HINT) from exc
 
-    gentl = EGenTL(cti) if cti else EGenTL()
-    discovery = EGrabberDiscovery(gentl)
-    discovery.discover(find_cameras=True)
-
-    readings = []
-    for i in range(len(discovery.cameras)):
-        try:
-            grabber = EGrabber(discovery.cameras[i])
-            readings.append(read_remote(grabber.remote, i))
-            del grabber  # closes the camera before the next one opens
-        except Exception as exc:  # one bad camera must not hide the others
-            readings.append(CameraReading(i, problem=f"could not open: {exc}"))
-    return readings
+    # The 2020 producer lacks some newer GenTL calls, and genicam's C layer prints
+    # 'GenTL producer does not implement ...' for each on stderr. Harmless.
+    h = Harvester()
+    try:
+        h.add_file(cti or default_cti())
+        h.update()
+        readings = []
+        for i in range(len(h.device_info_list)):
+            try:
+                ia = h.create(i)
+            except Exception:
+                continue  # an empty port on the grabber
+            try:
+                readings.append(read_remote(NodeMapRemote(ia.remote_device.node_map), i))
+            except Exception as exc:  # one bad camera must not hide the others
+                readings.append(CameraReading(i, problem=f"could not read: {exc}"))
+            finally:
+                ia.destroy()
+        return readings
+    finally:
+        h.reset()
 
 
 def log_rows(readings: list[CameraReading], note: str = "",

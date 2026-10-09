@@ -26,6 +26,9 @@ class FakeRemote:
             raise KeyError(feature)
         return self.values[feature]
 
+    def entries(self, feature):
+        return list(self.selector_temps)
+
     def set(self, feature, value):
         self.writes.append((feature, value))
         self.values[feature] = value
@@ -34,10 +37,9 @@ class FakeRemote:
 IDENT = {"DeviceVendorName": "LaVision", "DeviceModelName": "CX-16", "DeviceSerialNumber": "123"}
 
 
-def test_steps_through_the_selector_and_puts_it_back(monkeypatch):
+def test_steps_through_the_selector_and_puts_it_back():
     remote = FakeRemote({**IDENT, cameras.SELECTOR: "Mainboard"},
                         {"Sensor": 31.5, "Mainboard": 40.25})
-    monkeypatch.setattr(cameras, "_enum_entries", lambda r, f: ["Sensor", "Mainboard"])
 
     r = cameras.read_remote(remote, 2)
 

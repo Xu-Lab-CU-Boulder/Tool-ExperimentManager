@@ -222,7 +222,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--log", default="", help="append one JSON row per camera to this file")
     p.add_argument("--note", default="", help="free text stored with the rows (e.g. 'morning QC')")
     p.add_argument("--cti", default=None,
-                   help="GenTL producer to use (default: eGrabber's, from GENICAM_GENTL64_PATH)")
+                   help="GenTL producer to use (default: DaVis's own Coaxlink .cti)")
     p.add_argument("--json", action="store_true", help="print the rows as JSON")
     p.add_argument("--force", action="store_true", help="read even while DaVis is running")
     p.set_defaults(fn=cmd_camera_temps)

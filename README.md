@@ -156,10 +156,9 @@ files), so it runs on the DaVis PC without OpenCV.
 ## Camera temperatures
 
 `experimentkit cameras temps` reads each camera's temperatures straight from the camera over GenTL
-(eGrabber's producer for the CoaXPress cameras) and can append them to a JSON-lines log. **Close DaVis
+(DaVis's own Coaxlink producer for the CoaXPress CX-16s: the 2020 Coaxlink driver DaVis needs must stay, and the newer standalone eGrabber will not open against it) and can append them to a JSON-lines log. **Close DaVis
 first**: it refuses while DaVis is running, because a second program opening a camera DaVis is
-acquiring from can make DaVis lose it. Needs the `egrabber` package, which ships with eGrabber
-(`C:/Program Files/Euresys/eGrabber/python/*.whl`), not PyPI.
+acquiring from can make DaVis lose it. Needs `harvesters` and `genicam` from PyPI. The sCMOS cameras on Camera Link are not read yet.
 
 ```bash
 experimentkit cameras temps --note "morning QC" --log camera_temperatures.jsonl
