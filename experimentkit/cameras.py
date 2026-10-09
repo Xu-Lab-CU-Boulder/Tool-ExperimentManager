@@ -145,6 +145,68 @@ def default_cti() -> str:
 
 
 def read_all(cti: str | None = None) -> list[CameraReading]:
+    """Every camera on the PIV workstation: the CoaXPress CX-16s, then the PCO sCMOS.
+
+    A failure on one kind is reported as a reading with a problem; it never hides
+    the other kind.
+    """
+    readings = []
+    for reader, args in ((read_coaxpress, (cti,)), (read_pco, ())):
+        try:
+            readings += reader(*args)
+        except Exception as exc:
+            readings.append(CameraReading(len(readings), model=reader.__name__,
+                                          problem=str(exc)))
+    return readings
+
+
+#: PCO's SC2 SDK as DaVis ships it (the sCMOS cameras, over Camera Link on the
+#: Silicon Software microEnable IV cards).
+DAVIS_SC2 = Path(r"C:\DaVis_10.2.1.90613_Parker\win64\Hardware\Cameras\SC2")
+
+
+def read_pco(sdk: Path = DAVIS_SC2) -> list[CameraReading]:
+    """Open each PCO camera through DaVis's sc2_cam.dll and read PCO_GetTemperature.
+
+    Sensor temperature comes in tenths of a degree (the sensor is cooled, ~5 °C);
+    camera body and power supply in whole degrees.
+    """
+    import ctypes as ct
+    import os
+
+    if not (sdk / "sc2_cam.dll").exists():
+        raise RuntimeError(f"PCO's SDK is not at {sdk}")
+    os.add_dll_directory(str(sdk))
+    dll = ct.WinDLL(str(sdk / "sc2_cam.dll"))
+
+    handles = []
+    try:
+        for _ in range(8):  # PCO_OpenCamera opens the next free camera each call
+            h = ct.c_void_p()
+            if dll.PCO_OpenCamera(ct.byref(h), ct.c_ushort(0)) != 0:
+                break
+            handles.append(h)
+        readings = []
+        for i, h in enumerate(handles):
+            name = ct.create_string_buffer(64)
+            dll.PCO_GetCameraName(h, name, ct.c_ushort(64))
+            r = CameraReading(i, vendor="PCO", model=name.value.decode(errors="replace"),
+                              serial=f"port{i}")
+            ccd, cam, pwr = ct.c_short(), ct.c_short(), ct.c_short()
+            err = dll.PCO_GetTemperature(h, ct.byref(ccd), ct.byref(cam), ct.byref(pwr))
+            if err == 0:
+                r.temperatures_c = {"Sensor": ccd.value / 10, "Camera": float(cam.value),
+                                    "Power": float(pwr.value)}
+            else:
+                r.problem = f"PCO_GetTemperature error 0x{err & 0xFFFFFFFF:08x}"
+            readings.append(r)
+        return readings
+    finally:
+        for h in handles:
+            dll.PCO_CloseCamera(h)
+
+
+def read_coaxpress(cti: str | None = None) -> list[CameraReading]:
     """Open every camera the producer can see and read its temperatures.
 
     Empty grabber ports (they list as devices but cannot be opened) are skipped.
