@@ -9,7 +9,7 @@ Read [AGENTS.md](AGENTS.md) first: what this repository is, its design rules, an
 
 ## The lab handbook
 
-This lab follows the Lab Handbook: C:/Users/LaVision/Documents/GitHub/Lab-Code-Guide
+This lab follows the Lab Handbook: ../Lab-Code-Guide
 Start at its `ONBOARDING.md`, read the one page for your role, and follow `conventions/` when
 writing code and `practices/` before touching data or the rig. Anything specific to *this*
 repository is above; the handbook covers everything else.
@@ -18,7 +18,7 @@ Send things back rather than editing it: keep the `lab-repo` block in this repos
 `AGENTS.md` current when capabilities change, and file a note for anything the handbook itself
 should say —
 
-    python "C:/Users/LaVision/Documents/GitHub/Lab-Code-Guide/tools/note.py" --kind incident --repo . --title "..." --body "..."
+    python "../Lab-Code-Guide/tools/note.py" --kind incident --repo . --title "..." --body "..."
 
 (kinds: incident, proposal, drift, map, question)
 
