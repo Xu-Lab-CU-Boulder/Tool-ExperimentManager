@@ -4,6 +4,7 @@
     experimentkit ingest <card or folder> --dry-run      where would every clip go?
     experimentkit ingest <card or folder> --dry-run --json
     experimentkit storage status | sync | verify     project snapshots on the work and backup drives
+    experimentkit cameras temps --log <file>         camera temperatures over GenTL (DaVis closed)
 
 Run from inside a project repo, or pass --project. Nothing is copied: stage 1
 of ingest only reports. Copying arrives in stage 2, and will act only on what
@@ -156,6 +157,101 @@ def cmd_ingest(args) -> int:
     return 0 if facts["ok"] else 1
 
 
+def _davis_running() -> bool:
+    import subprocess
+
+    try:
+        out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq DaVis.exe", "/NH"],
+                             capture_output=True, text=True, timeout=20).stdout
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return "davis.exe" in out.lower()
+
+
+def cmd_camera_temps(args) -> int:
+    if args.every and not args.force:
+        # Started right after closing DaVis: give it up to 2 min to finish exiting.
+        import time
+
+        for _ in range(60):
+            if not _davis_running():
+                break
+            time.sleep(2)
+    if _davis_running() and not args.force:
+        print("error: DaVis is running. Close it first: opening a camera DaVis is "
+              "acquiring from can make it lose the camera. (--force to read anyway.)",
+              file=sys.stderr)
+        return 2
+    if not args.every:
+        return _camera_temps_once(args)
+
+    # Watch: read every --every seconds until DaVis starts (checked every 2 s, so a
+    # reading is never begun once DaVis is up) or --hours runs out. Meant to start at
+    # logon, so it records the warm-up from power-on.
+    import time
+
+    if args.plot and args.log:
+        _launch_live_plot(args.log)
+    end = time.monotonic() + args.hours * 3600
+    print(f"reading every {args.every:g} s until DaVis starts (at most {args.hours:g} h); "
+          "Ctrl+C to stop")
+    try:
+        while time.monotonic() < end:
+            _camera_temps_once(args)
+            next_at = time.monotonic() + args.every
+            while time.monotonic() < min(next_at, end):
+                if _davis_running():
+                    print("DaVis started: stopped reading the cameras.")
+                    return 0
+                time.sleep(2)
+    except KeyboardInterrupt:
+        print("stopped.")
+    return 0
+
+
+def _launch_live_plot(log: str) -> None:
+    """Open daviskit's live warm-up window on the log, as its own process.
+
+    It only reads the log, never the cameras, so it can stay open after DaVis starts.
+    """
+    import shutil
+    import subprocess
+
+    exe = shutil.which("daviskit")
+    if not exe:
+        print("note: daviskit is not installed, so no live plot "
+              "(daviskit camera-temps <log> --follow)", file=sys.stderr)
+        return
+    subprocess.Popen([exe, "camera-temps", log, "--follow"],
+                     creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0))
+
+
+def _camera_temps_once(args) -> int:
+    from . import cameras
+
+    try:
+        readings = cameras.read_all(args.cti)
+    except RuntimeError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    rows = cameras.log_rows(readings, note=args.note)
+    if args.json:
+        json.dump(rows, sys.stdout, indent=2)
+        sys.stdout.write("\n")
+    else:
+        print(f"{rows[0]['when'] if rows else ''}  {len(readings)} camera(s)")
+        for r in readings:
+            temps = ", ".join(f"{k} {v:.1f} °C" for k, v in r.temperatures_c.items())
+            print(f"  {r.index}  {r.label:<40} {temps or r.problem}")
+        if not readings:
+            print("  no cameras found (are they powered, and is DaVis closed?)")
+    if args.log and rows:
+        cameras.append_log(Path(args.log), rows)
+        print(f"appended {len(rows)} row(s) to {args.log}")
+    return 0 if readings and not any(r.problem for r in readings) else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="experimentkit", description="Capture at the bench.")
@@ -172,6 +268,23 @@ def build_parser() -> argparse.ArgumentParser:
                    help="how far into each end of a clip to look for the slate")
     p.add_argument("--json", action="store_true", help="print one JSON object instead of text")
     p.set_defaults(fn=cmd_ingest)
+
+    cams = sub.add_parser("cameras", help="read state straight from the cameras (DaVis closed)")
+    csub = cams.add_subparsers(dest="cameras_cmd", required=True)
+    p = csub.add_parser("temps", help="every camera's temperatures, over GenTL")
+    p.add_argument("--log", default="", help="append one JSON row per camera to this file")
+    p.add_argument("--note", default="", help="free text stored with the rows (e.g. 'morning QC')")
+    p.add_argument("--cti", default=None,
+                   help="GenTL producer to use (default: DaVis's own Coaxlink .cti)")
+    p.add_argument("--json", action="store_true", help="print the rows as JSON")
+    p.add_argument("--force", action="store_true", help="read even while DaVis is running")
+    p.add_argument("--every", type=float, default=0,
+                   help="keep reading every N seconds until DaVis starts (warm-up log)")
+    p.add_argument("--plot", action="store_true",
+                   help="with --every and --log: also open daviskit's live warm-up plot")
+    p.add_argument("--hours", type=float, default=4,
+                   help="with --every: stop after this long even if DaVis never starts")
+    p.set_defaults(fn=cmd_camera_temps)
 
     from .storage.cli import add_storage_parser
 
