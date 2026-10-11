@@ -245,6 +245,8 @@ def _camera_temps_once(args) -> int:
         return 2
 
     rows = cameras.log_rows(readings, note=args.note)
+    if args.laser and (args.force or not _davis_running()):
+        rows += _laser_rows(args.laser, args.note, rows[0]["when"] if rows else None)
     if args.json:
         json.dump(rows, sys.stdout, indent=2)
         sys.stdout.write("\n")
@@ -255,10 +257,32 @@ def _camera_temps_once(args) -> int:
             print(f"  {r.index}  {r.label:<40} {temps or r.problem}")
         if not readings:
             print("  no cameras found (are they powered, and is DaVis closed?)")
+        for row in rows[len(readings):]:
+            print(f"     {row['model']} ({row['serial']}): {row['laser_raw'] or row['problem']}")
     if args.log and rows:
         cameras.append_log(Path(args.log), rows)
         print(f"appended {len(rows)} row(s) to {args.log}")
     return 0 if readings and not any(r.problem for r in readings) else 1
+
+
+def _laser_rows(device: str, note: str, when: str | None) -> list[dict]:
+    """One log row for the laser: queries only (see experimentkit.laser)."""
+    from datetime import datetime
+
+    from . import laser
+
+    row = {"when": when or datetime.now().astimezone().isoformat(timespec="seconds"),
+           "note": note, "index": 0, "vendor": "Quantel", "model": "EverGreen laser",
+           "serial": device, "user_id": "", "temperatures_c": {}, "problem": "", "laser_raw": {}}
+    try:
+        out = laser.read_laser(device)
+        row["laser_raw"] = out["raw"]
+        names = {"LTEMP": "LaserHead", "TEMPF": "Oven", "TEMPS": "OvenSet"}
+        row["temperatures_c"] = {names[k]: v for k, v in out["values"].items() if k in names}
+        row["laser_counts"] = {k: v for k, v in out["values"].items() if k not in names}
+    except Exception as exc:  # the laser must never stop the camera log
+        row["problem"] = f"laser not read: {exc}"
+    return [row]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -289,6 +313,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--force", action="store_true", help="read even while DaVis is running")
     p.add_argument("--every", type=float, default=0,
                    help="keep reading every N seconds until DaVis starts (warm-up log)")
+    p.add_argument("--laser", default="", metavar="COMx",
+                   help="also ask the laser on this serial port for its temperatures and "
+                        "status (read-only queries; never sets anything)")
     p.add_argument("--plot", action="store_true",
                    help="with --every and --log: also open daviskit's live warm-up plot")
     p.add_argument("--hours", type=float, default=4,
