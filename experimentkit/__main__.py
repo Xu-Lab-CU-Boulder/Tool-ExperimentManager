@@ -157,6 +157,10 @@ def cmd_ingest(args) -> int:
     return 0 if facts["ok"] else 1
 
 
+#: Exit code of one reading that stopped because DaVis launched part-way through.
+DAVIS_STARTED = 3
+
+
 def _davis_running() -> bool:
     import subprocess
 
@@ -197,7 +201,8 @@ def cmd_camera_temps(args) -> int:
           "Ctrl+C to stop")
     try:
         while time.monotonic() < end:
-            _camera_temps_once(args)
+            if _camera_temps_once(args) == DAVIS_STARTED:
+                return 0
             next_at = time.monotonic() + args.every
             while time.monotonic() < min(next_at, end):
                 if _davis_running():
@@ -230,7 +235,11 @@ def _camera_temps_once(args) -> int:
     from . import cameras
 
     try:
-        readings = cameras.read_all(args.cti)
+        # Checked again before every camera is opened: DaVis may launch mid-reading.
+        readings = cameras.read_all(args.cti, stop=None if args.force else _davis_running)
+    except cameras.Interrupted as exc:
+        print(f"{exc}.")
+        return DAVIS_STARTED
     except RuntimeError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

@@ -90,3 +90,28 @@ def test_watch_stops_when_davis_starts(monkeypatch, capsys):
     monkeypatch.setattr("time.sleep", lambda s: None)
     assert cli.main(["cameras", "temps", "--every", "60"]) == 0
     assert calls == [1] and "DaVis started" in capsys.readouterr().out
+
+
+def test_a_reading_stops_before_the_next_camera_when_davis_starts(monkeypatch):
+    opened = []
+
+    def fake_cx(cti, stop):
+        cameras._check(stop)
+        opened.append("cx")
+        return [cameras.CameraReading(0, temperatures_c={"Imager": 30.0})]
+
+    def fake_pco(sdk, stop):
+        cameras._check(stop)
+        opened.append("pco")
+        return []
+
+    monkeypatch.setattr(cameras, "read_coaxpress", fake_cx)
+    monkeypatch.setattr(cameras, "read_pco", fake_pco)
+    answers = iter([False, True])  # DaVis appears after the CX-16s, before the sCMOS
+    try:
+        cameras.read_all(stop=lambda: next(answers))
+    except cameras.Interrupted:
+        pass
+    else:
+        raise AssertionError("expected Interrupted")
+    assert opened == ["cx"]  # the sCMOS cameras were never opened

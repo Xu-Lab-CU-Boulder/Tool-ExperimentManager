@@ -144,16 +144,33 @@ def default_cti() -> str:
     raise RuntimeError(f"DaVis's Coaxlink producer is not at {DAVIS_COAXLINK_CTI}; pass --cti")
 
 
-def read_all(cti: str | None = None) -> list[CameraReading]:
+class Interrupted(Exception):
+    """`stop()` said another program (DaVis) now needs the cameras."""
+
+
+def _check(stop) -> None:
+    if stop is not None and stop():
+        raise Interrupted("DaVis started: left the remaining cameras alone")
+
+
+def read_all(cti: str | None = None, stop=None) -> list[CameraReading]:
     """Every camera on the PIV workstation: the CoaXPress CX-16s, then the PCO sCMOS.
 
     A failure on one kind is reported as a reading with a problem; it never hides
     the other kind.
+
+    `stop` is called before every camera is opened; when it returns True the
+    reading ends there and no further camera is touched. DaVis opens the cameras
+    about 6-20 s after it launches (its log, 2026-10-11), and on that day a
+    reading already under way made DaVis miss one sCMOS at start-up. Checking
+    before each open keeps a camera in our hands for a few seconds at most.
     """
     readings = []
-    for reader, args in ((read_coaxpress, (cti,)), (read_pco, ())):
+    for reader, args in ((read_coaxpress, (cti, stop)), (read_pco, (DAVIS_SC2, stop))):
         try:
             readings += reader(*args)
+        except Interrupted:
+            raise
         except Exception as exc:
             readings.append(CameraReading(len(readings), model=reader.__name__,
                                           problem=str(exc)))
@@ -165,7 +182,7 @@ def read_all(cti: str | None = None) -> list[CameraReading]:
 DAVIS_SC2 = Path(r"C:\DaVis_10.2.1.90613_Parker\win64\Hardware\Cameras\SC2")
 
 
-def read_pco(sdk: Path = DAVIS_SC2) -> list[CameraReading]:
+def read_pco(sdk: Path = DAVIS_SC2, stop=None) -> list[CameraReading]:
     """Open each PCO camera through DaVis's sc2_cam.dll and read PCO_GetTemperature.
 
     Sensor temperature comes in tenths of a degree (the sensor is cooled, ~5 °C);
@@ -182,6 +199,7 @@ def read_pco(sdk: Path = DAVIS_SC2) -> list[CameraReading]:
     handles = []
     try:
         for _ in range(8):  # PCO_OpenCamera opens the next free camera each call
+            _check(stop)
             h = ct.c_void_p()
             if dll.PCO_OpenCamera(ct.byref(h), ct.c_ushort(0)) != 0:
                 break
@@ -206,7 +224,7 @@ def read_pco(sdk: Path = DAVIS_SC2) -> list[CameraReading]:
             dll.PCO_CloseCamera(h)
 
 
-def read_coaxpress(cti: str | None = None) -> list[CameraReading]:
+def read_coaxpress(cti: str | None = None, stop=None) -> list[CameraReading]:
     """Open every camera the producer can see and read its temperatures.
 
     Empty grabber ports (they list as devices but cannot be opened) are skipped.
@@ -218,12 +236,14 @@ def read_coaxpress(cti: str | None = None) -> list[CameraReading]:
 
     # The 2020 producer lacks some newer GenTL calls, and genicam's C layer prints
     # 'GenTL producer does not implement ...' for each on stderr. Harmless.
+    _check(stop)
     h = Harvester()
     try:
         h.add_file(cti or default_cti())
         h.update()
         readings = []
         for i in range(len(h.device_info_list)):
+            _check(stop)
             try:
                 ia = h.create(i)
             except Exception:
