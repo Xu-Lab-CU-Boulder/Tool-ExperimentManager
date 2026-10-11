@@ -182,7 +182,15 @@ def read_all(cti: str | None = None, stop=None) -> list[CameraReading]:
 DAVIS_SC2 = Path(r"C:\DaVis_10.2.1.90613_Parker\win64\Hardware\Cameras\SC2")
 
 
-def read_pco(sdk: Path = DAVIS_SC2, stop=None) -> list[CameraReading]:
+#: sCMOS cameras on the PIV workstation. Each PCO_OpenCamera takes ~8 s here (it
+#: scans the interfaces; measured 2026-10-11), and the first camera stays open while
+#: the second is opened. DaVis opens them ~12-20 s after it launches, so stop is
+#: checked before each open: a camera is then held at most ~9 s after DaVis starts.
+#: Open exactly this many rather than probing for one more.
+PCO_CAMERAS = 2
+
+
+def read_pco(sdk: Path = DAVIS_SC2, stop=None, count: int = PCO_CAMERAS) -> list[CameraReading]:
     """Open each PCO camera through DaVis's sc2_cam.dll and read PCO_GetTemperature.
 
     Sensor temperature comes in tenths of a degree (the sensor is cooled, ~5 °C);
@@ -198,7 +206,7 @@ def read_pco(sdk: Path = DAVIS_SC2, stop=None) -> list[CameraReading]:
 
     handles = []
     try:
-        for _ in range(8):  # PCO_OpenCamera opens the next free camera each call
+        for _ in range(count):  # PCO_OpenCamera opens the next free camera each call
             _check(stop)
             h = ct.c_void_p()
             if dll.PCO_OpenCamera(ct.byref(h), ct.c_ushort(0)) != 0:
