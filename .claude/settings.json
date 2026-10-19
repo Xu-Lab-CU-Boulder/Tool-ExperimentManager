@@ -25,6 +25,16 @@
           }
         ]
       }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -c \"import os,runpy,sys;d=os.environ.get('CLAUDE_PROJECT_DIR','.');c=[os.path.join(d,'tools','chat.py'),os.path.join(d,'..','Lab-Code-Guide','tools','chat.py')];p=next((x for x in c if os.path.isfile(x)),None);p or sys.exit(0);sys.path.insert(0,os.path.dirname(os.path.abspath(p)));sys.argv=[p]+['inbox', '--hook'];runpy.run_path(p,run_name='__main__')\""
+          }
+        ]
+      }
     ]
   }
 }
