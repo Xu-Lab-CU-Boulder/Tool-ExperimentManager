@@ -27,14 +27,19 @@ dependencies = [
 experimentkit = "experimentkit.__main__:main"
 
 [dependency-groups]
-dev = ["pytest>=8"]
+# matplotlib is optional at run time (storage plots are skipped without it),
+# but the tests draw those plots.
+dev = ["pytest>=8", "matplotlib>=3.7"]
 
 [tool.uv.sources]
-# Sibling repositories, resolved by relative path: every repo is cloned side by
-# side under one parent, and uv fails loudly if one is missing rather than
-# quietly installing something else.
+# projectkit is a sibling repository, resolved by relative path: uv fails loudly
+# if it is missing rather than quietly installing something else.
 projectkit = { path = "../Tool-ProjectManager", editable = true }
-markertracker = { path = "../Tool-TrackAnything", editable = true }
+# markertracker comes from GitHub, pinned to a commit: its clone's folder name
+# differs between computers (GUI-TrackAnything on parker-desktop), so a sibling
+# path broke the lock there (2026-10-19). To pick up a newer TrackAnything,
+# change rev and run `uv lock`.
+markertracker = { git = "https://github.com/Xu-Lab-CU-Boulder/Tool-TrackAnything.git", rev = "a934ab51b5fbca59435b199fc0894e6eff2b8c1d" }
 
 [build-system]
 requires = ["setuptools>=68"]
