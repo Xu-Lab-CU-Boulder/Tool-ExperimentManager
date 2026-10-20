@@ -1,0 +1,85 @@
+% References for experimentkit (the slate, ingest, storage sync) and slate/index.html.
+% Format: Lab Handbook skills/algorithm-docs. Two extra fields per entry:
+%   code  = the code it supports (file:function; slate/index.html is JavaScript, named by hand)
+%   match = verified   -- the source was read far enough to know it describes what the code does
+%           candidate  -- known to exist and to be the right kind of source, but not read
+%                         far enough; check before citing it in a paper
+% Written 2026-10-20. Nothing in this repository is a published method of its own: the
+% sources below are the standards and libraries the code implements or calls.
+
+@misc{iso18004_2015,
+  title        = {{ISO/IEC} 18004:2015 Information technology -- Automatic identification and data capture techniques -- {QR} Code bar code symbology specification},
+  organization = {ISO/IEC JTC 1/SC 31},
+  year         = {2015},
+  edition      = {3},
+  note         = {Cited by the encoder in slate/index.html ("Follows ISO/IEC 18004"). Title, edition and year confirmed from standards-body listings 2026-10-20 (withdrawn 2024-08, replaced by ISO/IEC 18004:2024). The text is paywalled and was not read, so the encoder's tables and constants were not checked against it here; tests/test_slate.py checks them by decoding with OpenCV instead.},
+  code         = {slate/index.html:QR.encode},
+  match        = {candidate},
+}
+
+@article{reed1960,
+  author  = {Reed, I. S. and Solomon, G.},
+  title   = {Polynomial Codes Over Certain Finite Fields},
+  journal = {Journal of the Society for Industrial and Applied Mathematics},
+  year    = {1960}, volume = {8}, number = {2}, pages = {300--304},
+  doi     = {10.1137/0108018},
+  note    = {The error-correcting code family QR uses. Metadata confirmed from Crossref 2026-10-20; the paper was not read. QR's specific form (generator with roots alpha^0..alpha^(e-1) over GF(2^8) mod 0x11D) is ISO/IEC 18004's, not this paper's.},
+  code    = {slate/index.html:QR.encode},
+  match   = {candidate},
+}
+
+@misc{opencv_qrcodedetector,
+  author       = {{OpenCV team}},
+  title        = {cv::QRCodeDetector, detectAndDecode},
+  howpublished = {\url{https://docs.opencv.org/4.x/de/dc3/classcv_1_1QRCodeDetector.html}},
+  note         = {The decoder ingest calls. Docstring read from cv2 4.14.0 in this repository's .venv, 2026-10-20 ("Both detects and decodes graphical code"; returns the text, the corner points, the binarized code). The web page refused the fetch (HTTP 403). Internals of the detector not read.},
+  code         = {experimentkit/decode.py:find_codes},
+  match        = {verified},
+}
+
+@misc{opencv_qrcodedetectoraruco,
+  author       = {{OpenCV team}},
+  title        = {cv::QRCodeDetectorAruco},
+  howpublished = {\url{https://docs.opencv.org/4.x/}},
+  note         = {The second detector ingest calls. Present in cv2 4.14.0 (checked 2026-10-20) but its Python docstring is empty and its documentation page was not read; candidate: a reference for how it finds the symbol (ArUco-style corner detection) still needs reading.},
+  code         = {experimentkit/decode.py:find_codes},
+  match        = {candidate},
+}
+
+@techreport{fips180_4,
+  author      = {{National Institute of Standards and Technology}},
+  title       = {Secure Hash Standard ({SHS})},
+  institution = {National Institute of Standards and Technology},
+  type        = {Federal Information Processing Standards Publication},
+  number      = {FIPS 180-4},
+  year        = {2015}, month = aug,
+  doi         = {10.6028/NIST.FIPS.180-4},
+  note        = {Defines SHA-256, the checksum every copy is fingerprinted with (through Python's hashlib). Title, date and DOI read from csrc.nist.gov 2026-10-20.},
+  code        = {experimentkit/storage/ledger.py:copy_hashing, experimentkit/storage/ledger.py:hash_file},
+  match       = {verified},
+}
+
+@misc{jsonlines,
+  title        = {{JSON Lines}},
+  howpublished = {\url{https://jsonlines.org/}},
+  note         = {The ledger's file format: UTF-8, one JSON value per line, newline-terminated. Read 2026-10-20. The ledger module also points at the lab's own PhD-Thesis/DATA-FORMATS.md for why it was chosen.},
+  code         = {experimentkit/storage/ledger.py:Ledger.add, experimentkit/storage/ledger.py:Ledger._apply},
+  match        = {verified},
+}
+
+@misc{gitignore,
+  title        = {gitignore -- Specifies intentionally untracked files to ignore ({Git} documentation)},
+  howpublished = {\url{https://git-scm.com/docs/gitignore}},
+  note         = {The .keep file "reads like a .gitignore" (keep.py): last matching pattern wins, a leading "!" negates, a pattern with no slash matches at any level. Read 2026-10-20. keep.matches follows those three rules only, with Python's fnmatch, not git's full matcher (no "**", no anchoring "/").},
+  code         = {experimentkit/storage/keep.py:matches},
+  match        = {verified},
+}
+
+@misc{whatwg_animation_frames,
+  author       = {{WHATWG}},
+  title        = {{HTML} Living Standard, section 8.12 Animation frames (requestAnimationFrame)},
+  howpublished = {\url{https://html.spec.whatwg.org/multipage/imagebitmap-and-animations.html#animation-frames}},
+  note         = {Each sync flip is applied inside a requestAnimationFrame callback, which receives a DOMHighResTimeStamp. Read 2026-10-20. The standard does not fix when the callbacks run relative to the display's refresh; "just before the next repaint" is browser practice, not normative text.},
+  code         = {slate/index.html:step},
+  match        = {verified},
+}
