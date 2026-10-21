@@ -8,11 +8,10 @@ identity**: it survives renamed files, a mixed-up SD card, and a copy to the
 wrong folder. **Sync** flips a large bar between black and white and numbers
 every flip, so footage from different cameras can be lined up to the frame.
 
-It is the first piece of ExperimentManager. The planned ingest step reads the
-slate out of each clip and files it into
-`3_experiments/raw/<id>/take03/<camera>/`. That does not exist yet: the page
-comes first so it can be tried with real cameras before anything is built
-around it.
+It is the first piece of ExperimentManager. Ingest reads the slate out of each
+clip to file it into `3_experiments/raw/<id>/take03/<camera>/`. So far only its
+plan exists: `experimentkit ingest --dry-run` reports where every clip would go
+and copies nothing.
 
 ---
 
@@ -98,9 +97,10 @@ is odd.**
   read a light-on-dark code.
 
 Flips happen on a screen refresh (`requestAnimationFrame`), with the bar and the
-QR changing in the same frame. Precision is about one camera frame: roughly
-33 ms at 30 fps, 17 ms at 60. That is plenty for a jellyfish bell and not enough
-for high-speed work, which needs a hardware trigger.
+QR changing in the same frame. The precision this should give is about one
+camera frame: roughly 33 ms at 30 fps, 17 ms at 60. That is our estimate, not a
+measurement: nothing detects the flips in footage yet. High-speed work needs a
+hardware trigger either way.
 
 **Sync at both the start and the end of a take.** Two cameras nominally at the
 same frame rate drift apart; two sync points let the drift be measured.

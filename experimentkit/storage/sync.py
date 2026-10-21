@@ -348,6 +348,9 @@ def safely_backed_up(wl: Ledger, bl: Ledger | None, rel: str) -> bool:
     if bl is None:
         return False
     files = [r for r in wl.files if r == rel or r.startswith(rel + "/") or r == f"{rel}.set"]
+    # files it was last seen with on C:, after it stopped being deletable: one never
+    # copied has no state on the work drive, and would otherwise not be asked about
+    files += sorted(wl.pending.get(rel, set()) - set(files))
     if not files:
         return False
     return all((b := bl.state(r)) and b.get("verified") == "full" for r in files)
@@ -548,6 +551,67 @@ def _clear_running(project: SyncProject) -> None:
         pass
 
 
+#: Held by a sync or a re-read for as long as it may write a ledger. Without it the
+#: 10-minute sync and the nightly re-read could run at once (report, 2026-10-20): a
+#: re-read that hashed a file just before a sync replaced it would append "verified
+#: in full" to the *new* copy, which nobody had re-read.
+LOCK = "sync-lock"
+
+
+class Busy(RuntimeError):
+    """Another sync or re-read holds the project's lock."""
+
+
+def lock_path(project: SyncProject) -> Path:
+    return project.source.parent / f"{project.source.name}.{LOCK}"
+
+
+def acquire(project: SyncProject) -> None:
+    """Take the project's lock, or raise Busy. A lock left by a process that is no
+    longer running (a crash, a reboot) is taken over."""
+    path = lock_path(project)
+    for _ in range(2):
+        try:
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            try:
+                pid = int(json.loads(path.read_text(encoding="utf8"))["pid"])
+            except (OSError, ValueError, KeyError, TypeError):
+                pid = None  # half-written by a holder that has only just started
+                if time.time() - path.stat().st_mtime < 60:
+                    raise Busy("another run is starting") from None
+            if pid is not None and _alive(pid):
+                raise Busy(f"another sync or re-read is running (process {pid})") from None
+            path.unlink(missing_ok=True)  # stale
+            continue
+        with os.fdopen(fd, "w", encoding="utf8") as fh:
+            fh.write(json.dumps({"pid": os.getpid(), "at": _stamp()}))
+        return
+    raise Busy("could not take the lock")
+
+
+def release(project: SyncProject) -> None:
+    try:
+        lock_path(project).unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def _withdraw_deletable(wl: Ledger, st: ProjectStatus) -> None:
+    """A recording once reported deletable that is no longer safe -- it gained or changed
+    files on C: -- loses that mark, and the ledger keeps the files it has on C: now, so
+    that if it is deleted before they reach the backup it is reported lost, not archived
+    (report, 2026-10-20). Files it gains later still are added on later runs."""
+    for rec, state, why in st.recordings:
+        target = wl.source_map.get(rec.rel, rec.rel)
+        if state in (SAFE, KEPT) or (target not in wl.deletable and target not in wl.pending):
+            continue
+        on_c = {_to_drive(rel, {rec.rel: target}) for rel in rec.files}
+        if target in wl.deletable or not on_c <= wl.pending[target]:
+            wl.add("undeletable", rel=target, why=f"{state}: {why}" if why else state,
+                   files=sorted(on_c))
+
+
 def _phased(project: SyncProject, work: Volume, backup: Volume | None,
             files: dict[str, FileEntry], recs: list[Recording], *,
             dry_run: bool) -> list[StageResult]:
@@ -585,9 +649,13 @@ def _phased(project: SyncProject, work: Volume, backup: Volume | None,
                 f"`experimentkit storage resume` to carry on")))
             break
         owned = set(rec.files)
-        if all((s := wl.state(_to_drive(rel, wl.source_map))) and s.get("verified") == "full"
-               for rel in owned):
-            continue  # already through the whole chain
+        # Already through the whole chain: judged as status judges it, on both ledgers.
+        # It once asked only whether the *work* copies were re-read in full, which copies
+        # made by the sync never are (they stay "transit"), so every recording went through
+        # both stages again on every run (report, 2026-10-20).
+        bl = Ledger(backup.root / project.name) if backup is not None else None
+        if classify(rec, files, wl, bl)[0] in (SAFE, KEPT):
+            continue
         if not dry_run:
             _mark_running(project, recording=rec.name, step=f"{n} of {len(todo)}",
                           stage=f"C: -> {work.id}", bytes=rec.size)
@@ -672,7 +740,6 @@ def sync_project(project: SyncProject, *, now: bool = False, dry_run: bool = Fal
     volumes = find_volumes() if volumes is None else volumes
     files = inventory(project.source)
     before = status(project, volumes, files)
-    results: list[StageResult] = []
     if not dry_run:
         record_usage(project, volumes)
 
@@ -680,6 +747,30 @@ def sync_project(project: SyncProject, *, now: bool = False, dry_run: bool = Fal
         # a pause stops everything, scheduled runs included -- not just the copying
         return [StageResult("paused", waiting="paused by the user; "
                             "`experimentkit storage resume` to carry on")], before
+    if dry_run:
+        return _sync_locked(project, now=now, dry_run=True, volumes=volumes, run_qc=run_qc,
+                            phased=phased, files=files, before=before)
+    try:
+        acquire(project)
+    except Busy as exc:
+        return [StageResult("C: -> " + project.work, waiting=str(exc))], before
+    try:
+        return _sync_locked(project, now=now, dry_run=False, volumes=volumes, run_qc=run_qc,
+                            phased=phased, files=files, before=before)
+    finally:
+        release(project)
+
+
+def _sync_locked(project: SyncProject, *, now: bool, dry_run: bool,
+                 volumes: dict[str, Volume], run_qc, phased: bool,
+                 files: dict[str, FileEntry],
+                 before: ProjectStatus) -> tuple[list[StageResult], ProjectStatus]:
+    """The body of `sync_project`, run while holding the project's lock (when not a dry run)."""
+    results: list[StageResult] = []
+    if not dry_run and before.work is not None:
+        # Before the quiet check: a project still being recorded into is exactly when a
+        # deletable recording gains files, and that run copies nothing.
+        _withdraw_deletable(Ledger(before.work.root / project.name), before)
     if not now and not before.quiet:
         r = StageResult("C: -> " + project.work)
         r.waiting = (f"project changed {before.minutes_since_change:.0f} min ago "
@@ -716,6 +807,7 @@ def sync_project(project: SyncProject, *, now: bool = False, dry_run: bool = Fal
             # is deleted later is not mistaken for one lost too early.
             if state in (SAFE, KEPT) and target not in wl.deletable:
                 wl.add("deletable", rel=target)
+        _withdraw_deletable(wl, after)
         current = {wl.source_map.get(r.rel, r.rel) for r in recs}
         for rel in list(wl.source_map.values()):
             if rel not in current and rel not in wl.gone:

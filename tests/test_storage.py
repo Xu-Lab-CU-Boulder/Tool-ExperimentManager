@@ -586,3 +586,79 @@ def test_a_pause_stops_scheduled_runs_before_they_do_anything(rig):
     assert [r.stage for r in results] == ["paused"]
     assert sync.running(rig.project) is None, "it never even marked itself as running"
     assert not (rig.g / "Tank").exists()
+
+
+def _delete_recording(rig, name):
+    for p in sorted((rig.source / name).rglob("*"), reverse=True):
+        p.unlink() if p.is_file() else p.rmdir()
+    (rig.source / name).rmdir()
+    (rig.source / f"{name}.set").unlink()
+
+
+def test_a_deletable_recording_that_gains_files_is_not_archived_when_deleted(rig):
+    """Report, 2026-10-20: a recording once marked deletable kept the mark after it gained
+    files on C:. Deleted before those files were copied, it was reported archived."""
+    sync.sync_project(rig.project)
+    sync.verify(rig.project, volumes.find_volumes()["xulab-backup-01"], role="backup")
+    sync.sync_project(rig.project)
+    assert "Tank/Tow_A" in Ledger(rig.g / "Tank").deletable
+    # a new result while the project is still busy: the run copies nothing
+    _write(rig.source / "Tow_A" / "PSD_late" / "B00001.im7", b"new result", when=time.time())
+    results, _ = sync.sync_project(rig.project)
+    assert "may be running" in results[0].waiting
+    assert "Tank/Tow_A" not in Ledger(rig.g / "Tank").deletable, "the mark is withdrawn"
+    _delete_recording(rig, "Tow_A")
+    _, st = sync.sync_project(rig.project, now=True)
+    assert st.gone_unsafe == ["Tank/Tow_A"] and "Tank/Tow_A" not in st.archived
+
+
+def test_a_withdrawn_recording_is_deletable_again_once_its_new_files_are_backed_up(rig):
+    backup = volumes.find_volumes()["xulab-backup-01"]
+    sync.sync_project(rig.project)
+    sync.verify(rig.project, backup, role="backup")
+    sync.sync_project(rig.project)
+    _write(rig.source / "Tow_A" / "PSD_late" / "B00001.im7", b"new result")
+    sync.sync_project(rig.project)  # copies it; the mark is withdrawn until re-read
+    assert states(rig.project)["Tow_A"] == sync.REREAD
+    assert "Tank/Tow_A" not in Ledger(rig.g / "Tank").deletable
+    sync.verify(rig.project, backup, role="backup")
+    sync.sync_project(rig.project)
+    wl = Ledger(rig.g / "Tank")
+    assert "Tank/Tow_A" in wl.deletable and "Tank/Tow_A" not in wl.pending
+    _delete_recording(rig, "Tow_A")
+    _, st = sync.sync_project(rig.project)
+    assert st.archived == ["Tank/Tow_A"] and not st.gone_unsafe
+
+
+def test_only_one_sync_or_reread_runs_at_a_time(rig, capsys):
+    """Report, 2026-10-20: nothing stopped the 10-minute sync and the nightly re-read
+    from writing the same ledgers at once."""
+    sync.acquire(rig.project)
+    try:
+        results, _ = sync.sync_project(rig.project)
+        assert "running" in results[0].waiting and not (rig.g / "Tank").exists()
+        with pytest.raises(sync.Busy):
+            sync.acquire(rig.project)
+        main(["storage", "verify"])
+        assert "re-read waits" in capsys.readouterr().out
+    finally:
+        sync.release(rig.project)
+    sync.sync_project(rig.project)
+    assert (rig.g / "Tank" / "Tow_A").exists() and not sync.lock_path(rig.project).exists()
+
+
+def test_a_lock_left_by_a_crashed_run_is_taken_over(rig):
+    import json
+
+    sync.lock_path(rig.project).write_text(json.dumps({"pid": 999999}), encoding="utf8")
+    sync.sync_project(rig.project)
+    assert (rig.g / "Tank" / "Tow_A").exists() and not sync.lock_path(rig.project).exists()
+
+
+def test_a_phased_sync_skips_recordings_already_through_the_chain(rig):
+    """Report, 2026-10-20: the skip asked whether the *work* copies were re-read in full,
+    which copies made by the sync never are, so every run carried every recording again."""
+    sync.sync_project(rig.project, phased=True)
+    assert set(states(rig.project).values()) == {sync.SAFE}
+    results, _ = sync.sync_project(rig.project, phased=True)
+    assert not [r for r in results if "Tow_A" in r.stage or "Settle" in r.stage]

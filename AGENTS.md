@@ -31,7 +31,8 @@ siblings = ["projectkit", "daviskit", "markertracker"]
 1. **It never deletes experimental data.** Storage says what is safe to delete; a person deletes
    it, in DaVis. "Safe" means both drives hold it *and* the backup's copy has been re-read.
 2. **It never writes into a DaVis project.** Everything it keeps sits beside the project:
-   `<project>.qc/`, `<project>.keep`, `<project>.sync-running.json`, `<project>.sync-paused`.
+   `<project>.qc/`, `<project>.keep`, `<project>.sync-running.json`, `<project>.sync-paused`,
+   `<project>.sync-lock` (one sync or re-read at a time).
 3. **Every copy is resumable and safe to interrupt**: checksum in transit, write to `.partial`
    and rename, one append-only ledger per drive. `storage pause` stops cleanly at a recording
    boundary.

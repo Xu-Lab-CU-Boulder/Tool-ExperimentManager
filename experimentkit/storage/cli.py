@@ -407,26 +407,41 @@ def cmd_verify(args) -> int:
     found = volumes.find_volumes()
     problems = []
     for p in _projects(args.project):
-        work, backup = found.get(p.work), found.get(p.backup or "")
-        # the work drive first: files that live only there get their fingerprint from it
-        for role, vol_id, vol in (("work", p.work, work), ("backup", p.backup, backup)):
-            if vol is None:
-                if vol_id:
-                    print(f"{p.name}: {vol_id} not connected -- its re-read waits")
-                continue
-            # Read the work ledger here rather than before the loop: the work
-            # re-read just above is what gives a file that lives only there its
-            # fingerprint, and a backup copy with nothing to compare against is
-            # skipped. Taken too early, the whole backup waits a second run.
-            reference = Ledger(work.root / p.name) if role == "backup" and work else None
-            n, read, bad = sync.verify(p, vol, role=role, budget_gb=args.budget_gb,
-                                       reference=reference)
-            print(f"{p.name}: {vol_id}: re-read {n} file(s), {_gb(read)}"
-                  + (f"; {len(bad)} MISMATCH" if bad else ""))
-            problems += bad
+        try:
+            sync.acquire(p)  # never alongside a sync: both write the ledgers
+        except sync.Busy as exc:
+            print(f"{p.name}: re-read waits -- {exc}")
+            continue
+        try:
+            problems += _verify_project(p, found, args)
+        finally:
+            sync.release(p)
     for msg in problems:
         print(f"  ! {msg}")
     return 1 if problems else 0
+
+
+def _verify_project(p: registry.SyncProject, found, args) -> list[str]:
+    """Re-read one project's copies, work drive then backup; returns the mismatches."""
+    problems = []
+    work, backup = found.get(p.work), found.get(p.backup or "")
+    # the work drive first: files that live only there get their fingerprint from it
+    for role, vol_id, vol in (("work", p.work, work), ("backup", p.backup, backup)):
+        if vol is None:
+            if vol_id:
+                print(f"{p.name}: {vol_id} not connected -- its re-read waits")
+            continue
+        # Read the work ledger here rather than before the loop: the work
+        # re-read just above is what gives a file that lives only there its
+        # fingerprint, and a backup copy with nothing to compare against is
+        # skipped. Taken too early, the whole backup waits a second run.
+        reference = Ledger(work.root / p.name) if role == "backup" and work else None
+        n, read, bad = sync.verify(p, vol, role=role, budget_gb=args.budget_gb,
+                                   reference=reference)
+        print(f"{p.name}: {vol_id}: re-read {n} file(s), {_gb(read)}"
+              + (f"; {len(bad)} MISMATCH" if bad else ""))
+        problems += bad
+    return problems
 
 
 def _installed() -> bool:

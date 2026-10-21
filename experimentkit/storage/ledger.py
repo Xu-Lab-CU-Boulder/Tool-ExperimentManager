@@ -16,6 +16,10 @@ this drive is the result of replaying its events in order:
                                                               layout may differ from C:'s: matched
                                                               by SetTime, decided 2026-09-19)
     deletable {rel}                                           was reported safe to delete from C:
+    undeletable {rel, why, files}                             no longer safe: it gained or changed
+                                                              files on C: after it was deletable;
+                                                              `files` (paths on this drive) must
+                                                              all be backed up before it is again
     gone     {rel, safe}                                      left C:
 
 `sha256` is always the checksum of the bytes as read from the file's source --
@@ -50,6 +54,7 @@ class Ledger:
         self.recordings: dict[str, str] = {}  # folder rel on this drive -> set_time
         self.source_map: dict[str, str] = {}  # folder rel on C: -> folder rel on this drive
         self.deletable: set[str] = set()
+        self.pending: dict[str, set[str]] = {}  # folder rel -> files seen on C: when withdrawn
         self.gone: dict[str, bool] = {}  # folder rel -> was it safe when it left
         if self.path.exists():
             for line in self.path.read_text(encoding="utf8").splitlines():
@@ -92,6 +97,8 @@ class Ledger:
             if old in self.deletable:
                 self.deletable.discard(old)
                 self.deletable.add(new)
+            if old in self.pending:
+                self.pending[new] = {new + r[len(old):] for r in self.pending.pop(old)}
         elif kind == "recording":
             self.recordings[e["rel"]] = e["set_time"]
             if e.get("source_rel"):
@@ -101,6 +108,10 @@ class Ledger:
                 self.source_map[e["source_rel"]] = e["rel"]
         elif kind == "deletable":
             self.deletable.add(e["rel"])
+            self.pending.pop(e["rel"], None)
+        elif kind == "undeletable":
+            self.deletable.discard(e["rel"])
+            self.pending.setdefault(e["rel"], set()).update(e.get("files", []))
         elif kind == "gone":
             self.gone[e["rel"]] = e["safe"]
 

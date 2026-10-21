@@ -177,6 +177,17 @@ can be run on demand (`storage verify --full --project P`).
   copies are. This is real data loss, or a folder moved outside DaVis.
 - **It was renamed** (same `SetTime`, new name) → targets renamed to match. Quiet.
 
+**A deletable recording that gains files** (a new result, added 2026-10-21 after a report of
+2026-10-20) loses its mark at the next run, even one that finds the project busy and copies
+nothing; the ledger keeps the files it had on C: then (`undeletable`). Deleted before those reach
+the backup, it is reported lost, not archived. The one case no sync can catch: files added *and*
+deleted between two runs, which no run ever saw. `storage deletable` reads C: as it is, so check
+it, not an old list, before deleting.
+
+**One run at a time** (2026-10-21): a sync and a re-read each hold `<project>.sync-lock` beside
+the project while they may write a ledger, and one that finds it held waits for the next run. A
+lock left by a process that is no longer running is taken over.
+
 ## 9. The report
 
 ```
@@ -238,6 +249,7 @@ recording without them shows as "undescribed" in the report rather than blocking
 | C: completely full | irrelevant to the sync (it only reads C:), but the report leads with the safe-to-delete list |
 | DaVis is recording | quiet check skips the project; the hourly task tries again next hour |
 | A file is locked by DaVis | skipped with a note; retried next run |
+| A sync or re-read is already running | the new run waits for the next one (`<project>.sync-lock`) |
 | A target file differs from the ledger (edited, corrupted) | reported, never overwritten; the source copy is kept and the old one moved to `.versions/` |
 | Two PCs sync to one drive | each source is its own target folder; volume ids keep them apart |
 | The ledger is lost | rebuilt from the targets' files and the sidecars (slower, same result) |
