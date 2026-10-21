@@ -5,8 +5,9 @@ drives with quality control on the way past.
 
 **This is an orchestrator** in the lab's library/orchestrator split. It knows where things live
 and in what order work happens, and leaves the heavy lifting to libraries: it imports
-`projectkit` (the record), `daviskit` (DaVis files, QC measurements) and `markertracker` (frames).
-No library imports it.
+`projectkit` (the record) and `markertracker` (frames), and `daviskit` (DaVis files, QC
+measurements) when it is installed: it is optional, imported where it is used, and not in
+`pyproject.toml`. No library imports it.
 
 The lab's conventions live in the **Lab Handbook**:
 https://github.com/Xu-Lab-CU-Boulder/Lab-Code-Guide — read `conventions/` before writing code and
@@ -23,7 +24,7 @@ answers = [
     "Has the rig drifted? (QC runs with every sync)",
     "How do I file a slate-labelled take into the project?",
 ]
-siblings = ["projectkit", "daviskit", "markertracker"]
+siblings = ["Tool-ProjectManager", "Tool-DaVisKit", "Tool-TrackAnything"]   # projectkit, daviskit, markertracker
 ```
 
 ## Design rules
@@ -47,8 +48,13 @@ siblings = ["projectkit", "daviskit", "markertracker"]
 experimentkit/
 ├── storage/        sync.py (the chain), ledger.py, inventory.py, volumes.py, registry.py,
 │                   keep.py, qc.py, cli.py
-├── (slate, ingest) the bench-capture side
+├── slate.py, decode.py, payload.py   reading the slate's QR codes out of a clip
+├── ingest.py, clips.py               ingest (dry run): where every clip on a card would be filed
+├── cameras.py, laser.py              camera and laser temperatures, read only
+slate/              the slate itself: one HTML page held up in front of the cameras
 docs/design/        storage-sync.md -- the design and every decision behind it
+docs/algorithms/    one page per algorithm, and references.bib
+examples/           three runnable examples on synthetic data
 tests/              test_storage.py runs the whole chain on throwaway folders for C:, G: and F:
 ```
 
@@ -57,5 +63,9 @@ tests/              test_storage.py runs the whole chain on throwaway folders fo
 ```
 pytest && ruff check . && ruff format --check .
 ```
+
+`pytest` passes (OpenCV's tests skip where it is not installed), but ruff is not yet clean
+(checked 2026-10-21): both `ruff check` and `ruff format --check` report existing findings. Until
+that is cleaned up, keep the tests green and add no new ruff findings in the files you touch.
 
 Design and decisions: [docs/design/storage-sync.md](docs/design/storage-sync.md).

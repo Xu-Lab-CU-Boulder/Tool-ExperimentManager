@@ -2,5 +2,9 @@
   "schema_version": 1,
   "role": "software-developer",
   "version": 2,
-  "onboarded": "2026-10-04"
+  "onboarded": "2026-10-04",
+  "prompt_audit": {
+    "date": "2026-10-21",
+    "model": "Opus 5.5"
+  }
 }
