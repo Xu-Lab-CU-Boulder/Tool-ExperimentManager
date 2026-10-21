@@ -8,8 +8,8 @@ status: draft
 
 # Verification, and when a recording is safe to delete from C:
 
-**Code:** `experimentkit/storage/sync.py:classify` (line 356), `verify` (297), `safely_backed_up`
-(343), the bookkeeping at the end of `sync_project` (lines 709–723); the keep list
+**Code:** `experimentkit/storage/sync.py:classify` (line 359), `verify` (297), `safely_backed_up`
+(343), `_withdraw_deletable`, the bookkeeping at the end of `_sync_locked` (lines 800–815); the keep list
 `experimentkit/storage/keep.py:matches` (42).
 
 **What it does.** Says, for each recording on C:, where it stands — *on C: only*, *new or changed
@@ -49,10 +49,12 @@ matching pattern wins, a leading `!` negates, a pattern with no `/` matches a fo
 depth. A pattern also matches everything under it (`glob/*`). Matching is Python's `fnmatch`, not
 git's matcher (no `**`, no leading-`/` anchoring).
 
-**After the sync:** every recording now *safe* or *kept* gets a `deletable` event; every mapped
-recording no longer on C: gets `gone {safe: was it deletable}`. In `status`, a recording that left
-C: is judged against the drives as they are *now*: it is *archived* if it was deletable then **or**
-`safely_backed_up` now (every file on the work drive has a `full` re-read on the backup), else it
+**After the sync:** every recording now *safe* or *kept* gets a `deletable` event; a deletable one
+no longer safe gets `undeletable` with the files it has on C: (also at the start of a run that
+finds the project busy); every mapped recording no longer on C: gets `gone {safe: was it
+deletable}`. In `status`, a recording that left C: is judged against the drives as they are
+*now*: it is *archived* if it was deletable then **or** `safely_backed_up` now (every file on the
+work drive, and every file pending from an `undeletable`, has a `full` re-read on the backup), else it
 is reported as lost too early. This is so that an alarm can clear (2026-09-20: three recordings
 moved off C: by hand were backed up hours later).
 
@@ -89,6 +91,8 @@ verify(drive, role, budget):
 - **`budget_gb` is checked before each file**, so a run can read up to one file (65 GB) past it.
 - **The keep list matches `r.name`**, the recording's path inside the project — patterns written
   against the work drive's (possibly different) layout do not apply.
-- **A recording reported safe stays deletable in the ledger** even if C: later gains new files
-  under it; `classify` reports it *new or changed* meanwhile, but if it is then deleted from C:
-  before the next sync, the `gone` event says it was safe and `status` counts it archived — the new files were never copied.
+- **Files added and deleted between two runs are never seen.** Since 2026-10-21 a deletable
+  recording that gains files loses its mark at the next run, busy or not (`undeletable`), and the
+  files it had then must be re-read on the backup before it counts as archived. Before that, one
+  deleted before the next sync was counted archived although its new files were never copied.
+  What no run inventoried, no run can know about.

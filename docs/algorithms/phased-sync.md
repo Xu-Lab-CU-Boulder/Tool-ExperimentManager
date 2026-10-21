@@ -1,16 +1,17 @@
 ---
 title: When a sync runs, and in what order (quiet check, phased chain)
 code: experimentkit/storage/sync.py:_phased
-fingerprint: a66a101d74827269
+fingerprint: f7bbcc0b030678ba
 refs: []
 status: draft
 ---
 
 # When a sync runs, and in what order
 
-**Code:** `experimentkit/storage/sync.py:_phased` (line 551), the gate in `sync_project` (663,
-lines 679–687), `QUIET_MINUTES` (45), the newest-change time in `status` (lines 422–425); the
-schedule `experimentkit/storage/cli.py:cmd_schedule` (541).
+**Code:** `experimentkit/storage/sync.py:_phased` (line 615), the gate in `sync_project` (731,
+lines 746–761) and `_sync_locked` (764, lines 770–778), `QUIET_MINUTES` (45), the lock `acquire`,
+the newest-change time in `status` (lines 425–428); the schedule
+`experimentkit/storage/cli.py:cmd_schedule` (556).
 
 **What it does.** Decides whether a sync may run now, and carries the project to the drives in an
 order that frees C: as early as possible. A project that changed in the last 10 minutes is left
@@ -32,8 +33,9 @@ A run proceeds if it is not paused (`<project>.sync-paused` absent) and (quiet o
 
 The phased order: the project files $P$ (those in no recording: `Properties/`, the `.exp`, the QC
 folder), then recordings sorted by $\max_{f \in r} m_f$ ascending. Before each recording the pause
-file is checked; a recording is skipped if every one of its files' **work-drive** state is
-verified `full`.
+file is checked; a recording is skipped if `classify` already finds it safe to delete (or kept):
+every file it has on C: now is on the work drive, matches on the backup, and is re-read there in
+full (see safe-to-delete.md).
 
 **Ours, all of it:** $Q$ = 10 min (decided 2026-09-19); the phased order (2026-09-20: with 470 GB
 waiting and C: nearly full, the whole-project order meant nothing was deletable until the last
@@ -48,18 +50,20 @@ sync_project(project, now, phased):
     files <- inventory(C:); status <- status(project)
     log free space (at most every 30 min; see storage-forecast.md)
     if paused: stop
+    take <project>.sync-lock, or stop ("another sync or re-read is running")
+    withdraw the deletable mark of any recording no longer safe (see safe-to-delete.md)
     if not now and not quiet: stop ("changed n min ago")
     mark running; QC of new recordings (at most 3); re-inventory
     if work drive absent: wait
     elif phased: _phased(...)
     else: everything C: -> work, then everything work -> backup
-    mark deletable / gone (see safe-to-delete.md); mirror QC; clear running
+    mark deletable / gone (see safe-to-delete.md); mirror QC; clear running; release the lock
 
 _phased:
     project files: C: -> work, work -> backup
     for r in recordings, least recently changed first:
         if paused: stop ("paused after n of N")
-        if all of r's work-drive files are verified full: next
+        if classify(r) is safe or kept: next
         C: -> work (only r's files)
         if no backup: note "waiting"; next
         work -> backup (only r's files, by their work-drive paths)
@@ -72,12 +76,11 @@ _phased:
   DaVis writing without changing modified times, is copied mid-write. `.set` last limits the
   damage (a half-copied recording is not a recording on the drive). A firmer "acquisition
   complete" signal is an open question in the design (§15, item 2).
-- **The skip test looks at the work drive.** Read from the code: a file copied C: → work → backup
-  ends with work state `transit` (as `examples/storage_chain.py` prints), and the work re-read only reads files never verified, so the
-  work state rarely reaches `full`. The "already through the whole chain" shortcut then seldom
-  fires, and each run calls both copy stages for every recording — each walking the whole
-  project on the work drive — although they then skip every file. Correct, but slower than
-  intended; the backup ledger may be what was meant.
+- **The skip test reads both ledgers once per recording.** Until 2026-10-21 it asked whether the
+  *work* copies were re-read in full, which copies made by the sync never are (they stay
+  `transit`), so it seldom fired and every run carried every recording through both stages. It
+  now asks `classify`, as status does.
 - **"Oldest first" is by newest file**, so a recording that gained a processed result yesterday
   goes to the back of the queue.
-- **No lock.** A second run can start while one is copying (see ledger-replay.md).
+- **One run at a time.** A sync and a re-read each hold `<project>.sync-lock`; a run that finds it
+  held waits for the next (2026-10-21). While the nightly re-read runs, the 10-minute syncs wait.

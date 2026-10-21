@@ -1,15 +1,15 @@
 ---
 title: The ledger: a file's state as the replay of its events
 code: experimentkit/storage/ledger.py:Ledger._apply
-fingerprint: 70ea309cb5f50cda
+fingerprint: 758418ac350d9434
 refs: [jsonlines]
 status: draft
 ---
 
 # The ledger
 
-**Code:** `experimentkit/storage/ledger.py:Ledger._apply` (line 61), `Ledger.__init__` (46),
-`Ledger.add` (107).
+**Code:** `experimentkit/storage/ledger.py:Ledger._apply` (line 66), `Ledger.__init__` (50),
+`Ledger.add` (118).
 
 **What it does.** Each drive keeps, beside its copy of a project,
 `<drive>/<project>/.experimentkit/ledger.jsonl`: one JSON object per line [jsonlines], appended
@@ -36,9 +36,10 @@ $$
 | `copy`, `adopt` | the file's state is replaced: size, source mtime, sha256, verified (any mismatch forgotten) |
 | `verify` | as above; a file with no fingerprint takes the first good full read as its fingerprint |
 | `version` | the file's state is dropped (its old copy was moved to `.versions/`) |
-| `rename {old, new}` | every file under `old` (and `old.set`), the recording, its C: mapping and its deletable flag move to `new` |
+| `rename {old, new}` | every file under `old` (and `old.set`), the recording, its C: mapping, its deletable flag and its pending files move to `new` |
 | `recording {rel, set_time, source_rel}` | folder `rel` holds that `SetTime`; it copies C: folder `source_rel` (an older C: path mapped to `rel` is dropped) |
-| `deletable {rel}` | was reported safe to delete from C: |
+| `deletable {rel}` | was reported safe to delete from C: (clears its pending files) |
+| `undeletable {rel, why, files}` | no longer safe: it gained or changed files on C:. `files`, its paths on this drive then, are kept as pending and must be re-read on the backup before it counts as archived |
 | `gone {rel, safe}` | left C:, and whether it was safe when it did |
 
 Each `add` appends one line, flushes and `fsync`s it, then applies it. On reading, a line that is
@@ -72,8 +73,7 @@ specific source is claimed for it here.
   cost to watch.
 - **A `mismatch` survives later good verifies** of the same file: only a fresh `copy` or `adopt`
   clears it, which is what forces a re-copy.
-- **Two processes appending at once** are not locked against each other, and each holds its own
-  replayed state. `sync-running.json` is written for people to see, but `sync_project` does not
-  refuse to start when another sync is running; the nightly `verify` task and a 10-minute `sync`
-  task can both append to the backup's ledger. Lines are appended whole, so the file stays
-  readable; whether the two can ever disagree about a file has not been worked through.
+- **One writer at a time is kept by the callers, not the ledger.** `sync_project` and
+  `storage verify` hold `<project>.sync-lock` (2026-10-21). Before that, a re-read that hashed a
+  file just before a sync replaced it could append "verified in full" to the new copy. Code that
+  writes a ledger outside those two must take the lock too.
