@@ -1,6 +1,7 @@
 ---
 title: The slate's QR encoder
 source: slate/index.html:QR.encode (JavaScript; kept by hand, the checker reads Python only)
+code: slate/index.html:QR.encode
 refs: [iso18004_2015, reed1960]
 status: draft
 ---

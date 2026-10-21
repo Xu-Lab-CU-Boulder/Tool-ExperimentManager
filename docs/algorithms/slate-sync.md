@@ -1,6 +1,8 @@
 ---
 title: Sync flips (camera synchronisation from the slate)
 source: slate/index.html:step (JavaScript; kept by hand) and experimentkit/slate.py:SlateReading.sync_range
+code: experimentkit/slate.py:SlateReading.sync_range
+fingerprint: 23f43863a4f4986d
 refs: [whatwg_animation_frames]
 status: draft
 ---
