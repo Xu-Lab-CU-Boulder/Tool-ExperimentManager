@@ -1,0 +1,5 @@
+- Guide (setup, ingest in detail, labelling cameras, storage, camera temperatures, where it sits beside projectkit, the interface, the folder layout, the roadmap, the tests): [docs/guide.md](../guide.md)
+- The slate, and the format of its codes: [slate/README.md](../../slate/README.md)
+- Storage's design and every decision behind it: [docs/design/storage-sync.md](../design/storage-sync.md)
+- How each step works, with its sources: [docs/algorithms/](../algorithms/README.md)
+- Design rules and layout, for people and agents changing the code: [AGENTS.md](../../AGENTS.md)

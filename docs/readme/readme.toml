@@ -1,0 +1,3 @@
+# How Lab-Docs' README generator builds README.md from this folder (`python -m labdocs readme`).
+title = "ExperimentManager"
+contact = "Parker McDonnell"

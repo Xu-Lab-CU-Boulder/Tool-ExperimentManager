@@ -1,42 +1,75 @@
+<!-- Built by Lab-Docs' README generator (python -m labdocs readme Tool-ExperimentManager) from docs/readme/.
+     Edit those parts and rebuild; changes made here are lost. -->
+
 # ExperimentManager
 
-Capture at the bench: everything from "I'm about to record" to "the data is
-filed and checked". Source control for how data was collected, the tools to run
-a session, and the path from camera to project.
+Capture at the bench, from "I'm about to record" to "the data is filed and checked": a slate that puts the experiment and take into the footage, an ingest that reads it back out, and the storage that keeps DaVis projects on a work and a backup drive, for lab members recording experiments on the rig.
 
-**Status:** stage 1. The [slate](slate/README.md) puts the experiment id and
-take into the footage itself; `experimentkit ingest --dry-run` reads it back out
-and reports where every clip would be filed. Nothing is copied yet.
+no release yet · MIT licence · tests passing (78, 2026-10-20)
 
----
+Source control for how data was collected, the tools to run a session, and the path from camera to project. **Status: stage 1.** The [slate](slate/README.md) puts the experiment id and take into the footage itself, and `experimentkit ingest --dry-run` reads it back out and reports where every clip would be filed; nothing is copied yet. The storage commands do copy, C: to work drive to backup, and say which recordings are safe to delete; they never delete anything and never write into a DaVis project. The package and its command are both `experimentkit`.
 
-## Setup
+## Features
 
-Clone beside the other repositories. `uv` resolves projectkit and markertracker
-from their sibling folders, so the layout is required:
+- **A slate for every take**: one HTML page in a browser, held up to each camera. Its QR code names the experiment and take, so the footage carries its own identity through renamed files and mixed-up SD cards; its sync bar flips and numbers each flip, to line up cameras to the frame.
+- **Where would every clip go?** Point it at an SD card or a capture folder and it reads the slate in each clip's first or last 10 s, works out the camera from a `CAMERA.txt` label, and reports where each clip would be filed in the project. It never guesses: a clip with no slate, codes that disagree or a clash is listed as unsorted or a conflict, with the reason.
+- **Keep DaVis projects safe**: each project copied from C: to a work drive and on to a backup drive, one recording at a time, checksummed and safe to interrupt, waiting quietly for a drive to be plugged in.
+- **What is safe to delete from C:?** Only what both drives hold and the backup has been re-read in full; you delete it, in DaVis.
+- **See the copy and the drives**: what is where, the running copy's progress, free space on each drive over time and the days until it is full, a screen to leave open, pause and resume.
+- **Watch the rig on the way past**: quality control on new recordings and calibrations with every sync (through daviskit).
+- **Camera temperatures**: read straight from the cameras while DaVis is closed, logged over the warm-up, with the laser's temperatures and status by read-only queries.
 
-```
-GitHub/
-  ExperimentManager/
-  ProjectManager/        <- projectkit
-  GUI-TrackAnything/     <- markertracker
-```
+## Install
 
-```bash
-cd ExperimentManager
+Needs Python 3.12 or newer.
+
+It needs two lab packages that are not on PyPI: **projectkit** (the record), from the sibling folder `../Tool-ProjectManager`, so clone that beside this repository; and **markertracker** (frame sources), from Tool-TrackAnything on GitHub at commit `a934ab5`, so Git must be installed. `pyproject.toml` names both under `[tool.uv.sources]`, which only [uv](https://docs.astral.sh/uv/) reads. With uv it is one step, test tools included:
+
+```bat
 uv sync
 ```
 
-## Ingest, stage 1: the dry run
+pip reads none of that. To install with pip, make the `.venv` (the first of the two lines at the end of this section), put the two lab packages into it, then install this one (the second line):
 
-Run from inside a project repository (or pass `--project`), pointing at an SD
-card or a capture folder:
-
-```bash
-uv run --project ../ExperimentManager experimentkit ingest E:\ --dry-run
+```bat
+.venv\Scripts\pip install -e ..\Tool-ProjectManager
+.venv\Scripts\pip install "markertracker @ git+https://github.com/Xu-Lab-CU-Boulder/Tool-TrackAnything.git@a934ab51b5fbca59435b199fc0894e6eff2b8c1d"
 ```
 
+Optional: daviskit (Tool-DaVisKit) installed in the same environment reads the DaVis `.set` files and runs the QC; matplotlib draws the storage plots. `cameras temps` needs `harvesters` and `genicam` from PyPI, and DaVis's own camera drivers.
+
+```bat
+uv sync
 ```
+
+## Start it
+
+Open `slate/index.html` in a browser to see the slate; it needs nothing installed. For the commands, `experimentkit --help` lists them (`ingest`, `storage`, `cameras`) and `experimentkit storage --help` the storage ones. To see ingest work with no camera or card, run the example that builds a fake SD card and a throwaway project in a temporary folder:
+
+```bat
+.venv\Scripts\python examples\ingest_plan.py
+```
+
+## Usage
+
+**Slate every take.** Open `slate/index.html` in a browser, fill in the experiment id and take, and hold it up to each camera when the take starts (and, if you like, before it stops). Everything entered lives in the page's address, so a bookmark reopens the same slate and nothing leaves the device:
+
+```text
+slate/index.html#id=20260212_hooper1_vertical-swimming&take=3&note=18+°C
+```
+
+**Where would every clip go?** From inside a project repository (or with `--project`), point ingest at an SD card or a capture folder. It copies nothing. (Here and below, `experimentkit` is this repository's `.venv\Scripts\experimentkit`; from another folder, `uv run --project <this repository> experimentkit ...` finds it.)
+
+```bat
+experimentkit ingest E:\ --dry-run
+```
+
+Its report, for a card with two clips, looks like this:
+
+```text
+ingest --dry-run   E:\
+into project       <the project>
+
   DCIM/100NIKON/DSC_0001.mp4
       video, 1.2 GB, camera cam-left
       slate  20260212_hooper1_vertical-swimming take03  (head, frame 12)
@@ -50,251 +83,53 @@ uv run --project ../ExperimentManager experimentkit ingest E:\ --dry-run
 --dry-run: nothing was copied.
 ```
 
-For each clip it decides:
+The exit code is 0 only when every clip would be filed or already is, so it works in a script; `--json` gives the same facts as one object.
 
-- **Which experiment and take**, from the slate. Only the first and last 10 s
-  are searched (`--seconds` to change it), so a tail slate held up before
-  stopping works too.
-- **Which camera**, from a `CAMERA.txt` label (below), or `--camera NAME` for a
-  whole card.
-- **Where it would go**, from projectkit: the dataset's stage folder, then the
-  take, then the camera, with the original filename untouched.
+**How a slate is read**, on a frame made up here: a QR code drawn into a noisy synthetic image, found with the two OpenCV detectors ingest uses, and parsed. A code that is not the slate's, such as a product label, is ignored rather than guessed at:
 
-And it **never guesses**. Each clip ends in one of four states:
+```python
+import cv2
+import numpy as np
 
-| State | Meaning |
-|---|---|
-| would be filed | One experiment and take, a dataset that exists, a free destination |
-| already filed | The same file (by size, for now) is already at the destination |
-| conflict | Something different is already there, or two clips would land on one path |
-| unsorted | No slate, codes that disagree, an experiment the project lacks, or an unreadable clip, with the reason given |
+from experimentkit.decode import find_codes
+from experimentkit.payload import parse
 
-The exit code is 0 when every clip would be filed or already is, and 1
-otherwise, so it works in a script. `--json` prints the same facts as one object.
+code = cv2.QRCodeEncoder.create().encode("pk1:20260212_hooper1_vertical-swimming:take03")
+code = cv2.resize(code, None, fx=8, fy=8, interpolation=cv2.INTER_NEAREST)
+scene = np.clip(np.random.default_rng(0).normal(110, 6, (720, 1280)), 0, 255).astype(np.uint8)
+scene[100:100 + code.shape[0], 400:400 + code.shape[1]] = code
+frame = cv2.cvtColor(scene, cv2.COLOR_GRAY2BGR)
 
-**Running without `--dry-run` refuses.** Copying arrives in stage 2 and will act
-only on clips the dry run calls certain.
+print(parse(find_codes(frame)[0]))
+print(parse("https://example.com/label"))
+```
 
-### Labelling cameras
+```text
+SlateCode(dataset_id='20260212_hooper1_vertical-swimming', take=3, sync=None)
+None
+```
 
-Put a file named `CAMERA.txt` containing one name (`cam-left`, `triton-1`) at
-the top of each SD card, or in each camera's capture folder. Do it once: it stays
-true for as long as that card lives in that camera. A clip takes the label of
-the nearest `CAMERA.txt` above it.
+**Keep a DaVis project on the work and backup drives**, from your own shell (an agent's sandbox can hide the registry it writes in `AppData`). Label each drive once, register the project, then sync and check:
 
-Without labels, clips are grouped by the folder they came from and named
-`unknown-1`, `unknown-2`. That keeps two identical GoPros from overwriting each
-other, but the names mean nothing later, so label the cards.
-
-### What counts as a clip
-
-A video file (`.mp4`, `.mov`, `.mkv`, `.avi`, …), or a folder of two or more
-images, which is how GigE capture software such as the Tritons' usually writes.
-A folder of images is one clip. Anything else is listed as ignored rather than
-silently skipped.
-
-### Under the hood
-
-Frames come from markertracker's frame sources, so a video and an image folder
-are read the same way. The slate's QR codes are decoded with two OpenCV
-detectors, since one alone misses valid codes. A window stops being searched two
-seconds after the slate is put down. `tests/test_page_to_ingest.py` runs codes
-drawn by the slate page's own encoder through ingest end to end.
-
----
-
-## Storage: keeping DaVis projects on the work and backup drives
-
-The acquisition PC's disk fills with tomographic PIV recordings (60+ GB each).
-`experimentkit storage` keeps each registered DaVis project snapshotted on a
-work drive (copied from C:) and a backup drive (copied from the work drive),
-waits quietly for either drive to be plugged in, and says which recordings are
-safe to delete from C: -- once both copies exist and the backup has been
-re-read in full. It never deletes anything; you delete in DaVis. Design and
-decisions: [docs/design/storage-sync.md](docs/design/storage-sync.md).
-
-```bash
-experimentkit storage volume G:\ --id xulab-work-01 --purpose work        # once per drive
+```bat
+experimentkit storage volume G:\ --id xulab-work-01 --purpose work
 experimentkit storage volume F:\ --id xulab-backup-01 --purpose backup
 experimentkit storage add C:\...\Project_Tomo_Setup --work xulab-work-01 --backup xulab-backup-01
-experimentkit storage sync --phased   # one recording at a time, oldest first, to a verified backup
-experimentkit storage verify          # re-read the copies (makes recordings deletable)
-experimentkit storage status          # what is where, what can go from C:, safe to unplug?
-experimentkit storage drives          # free space on C:, the work drive and the backup drive
-experimentkit storage deletable --paths   # only what is safe to delete from C: (delete in DaVis)
-experimentkit storage progress        # the running copy: recording, step n of N, % on the destination
-experimentkit storage usage --plot usage.png   # free space over time per drive, GB/day, days to full
-experimentkit storage watch           # the same, refreshed -- a screen to leave open
-experimentkit storage pause | resume  # stop cleanly at the next recording; carry on later
-experimentkit storage keep "Volume_Self_Cal/*"   # never offer these for deletion
-experimentkit storage schedule        # prints the scheduled-task commands to run yourself
+experimentkit storage sync --phased
+experimentkit storage status
 ```
 
-**Run `storage add` from your own shell, not from an agent's.** An agent's sandbox
-can redirect writes to `AppData`, so a registry it creates may be invisible to you
-and to the scheduled tasks -- which then report "no projects registered" and do
-nothing (2026-09-20).
+The other storage commands (verify, deletable, progress, usage, watch, pause, keep, schedule), and what a day of recording taught it, are in [docs/guide.md](docs/guide.md). The `examples/` run ingest, the slate reader and the whole storage chain on synthetic data in temporary folders.
 
-**What a day of recording taught it** (2026-09-20, when C: filled with 470 GB
-still only there):
+## More
 
-- The sync runs **every 10 minutes**, not hourly. A run that finds the project
-  busy does nothing and waits for the next, so an hourly schedule can miss every
-  quiet gap in a working day; a run with nothing to do costs a directory walk.
-- **`--phased`** carries each recording the whole way -- C:, work, backup,
-  re-read -- before starting the next, so space is freed early instead of only
-  when the whole backlog is through.
-- A recording that left C: before it was safe is judged against the drives
-  *now*, so the alarm clears once its copies are verified rather than crying for
-  ever.
-
-Needs only the standard library (daviskit, if installed, reads the `.set`
-files), so it runs on the DaVis PC without OpenCV.
-
----
-
-## Camera temperatures
-
-`experimentkit cameras temps` reads each camera's temperatures straight from the camera over GenTL
-(DaVis's own Coaxlink producer for the CoaXPress CX-16s: the 2020 Coaxlink driver DaVis needs must stay, and the newer standalone eGrabber will not open against it) and can append them to a JSON-lines log. **Close DaVis
-first**: it refuses while DaVis is running, because a second program opening a camera DaVis is
-acquiring from can make DaVis lose it. Needs `harvesters` and `genicam` from PyPI. The sCMOS cameras on Camera Link are not read yet.
-
-```bash
-experimentkit cameras temps --note "morning QC" --log camera_temperatures.jsonl
-```
-
-## Where it sits
-
-The research tools split into two roles.
-
-| Role | Tool | Repo | Job |
-|---|---|---|---|
-| **Library** | `sigshep` | Sensor-Pipeline-GUI | Read and process signals |
-| **Library** | `markertracker` | GUI-TrackAnything | Track markers in video |
-| **Orchestrator** | `projectkit` | ProjectManager | **The record**: structure, sidecars, git/OneDrive boundary, bibliography |
-| **Orchestrator** | ExperimentManager | this repo | **Capture**: slate, ingest, camera identity, sync, QC |
-
-**Libraries do the heavy lifting. Orchestrators pull the strings.**
-
-- **ExperimentManager never reimplements heavy lifting.** Reading frames from
-  several cameras, tracking markers and manipulating signals belong in sigshep
-  and markertracker, where every project can use them. If ExperimentManager
-  needs something a library does not offer yet, it goes into the library.
-- **Libraries never import an orchestrator.** sigshep and markertracker stay
-  usable on any data, in any lab, in any folder layout.
-- **ExperimentManager is optional. The record never depends on it.** Everything
-  it produces is plain files in the layout projectkit defines, with sidecars
-  projectkit can check on its own. If this project stalls or is rewritten, every
-  dataset it ever filed is still readable and verifiable.
-
-That last rule is what lets ExperimentManager be ambitious: a GUI, camera SDKs,
-fast releases. projectkit stays small, conservative and dependency-free, and
-nothing about your data rests on the more experimental of the two.
-
-## The boundary with ProjectManager
-
-One question decides where a feature goes:
-
-> *Would I need this to read and verify my data five years from now, with
-> ExperimentManager uninstalled?*
-
-| Yes: stays in ProjectManager | No: belongs here |
-|---|---|
-| Sidecar format and dataset profiles | The slate |
-| `dataset new / scan / check / list` | Ingest from SD cards and capture folders |
-| Folder layout, stages, git/OneDrive split | Camera identity: card labels, serials |
-| Stencils, bibliography, doctor, figures | Sync alignment across cameras |
-| | Session QC, bench workflow, acquisition control |
-
-## The interface
-
-Files, not messages. ExperimentManager writes where projectkit expects, using
-projectkit as a library, and the dependency only ever points one way.
-
-1. **Paths come from projectkit.** `Config.load().stage_dir("raw")`, never a
-   hardcoded path, so a change to the project blueprint is followed
-   automatically.
-2. **Sidecars are created through projectkit** (`Dataset.create()`, `save()`),
-   so ExperimentManager cannot write one projectkit does not recognise.
-3. **Capture details live in their own top-level block** of the sidecar, such
-   as `"capture": {takes, cameras, sync points}`. projectkit keeps the block and
-   does not interpret it.
-4. **Never write inside `files`.** projectkit's `scan` rebuilds that block from
-   disk and replaces it whole, so per-file tags (which take, which camera) would
-   vanish on the next rescan. Key them by file name inside `capture` instead.
-5. **Check the schema before writing.** `require_supported_schema()` raises if
-   the sidecar is a newer major format than the installed projectkit
-   understands.
-6. **After filing, projectkit verifies.** Ingest ends with projectkit's `scan`
-   and `check`, the same integrity checks you would run by hand.
-7. **Git stays the user's.** ExperimentManager writes files and never commits.
-
-projectkit guarantees its side of this, and
-`ProjectManager/tests/test_sidecar_contract.py` pins it: every key it does not recognise survives `save`,
-`dataset edit` and `dataset scan`; `dataset check` never writes; a newer major
-schema is refused and left untouched; a newer minor is rewritten without being
-downgraded. The tests were checked against deliberately broken copies of
-projectkit, so they fail if the guarantee breaks.
-
-For anything that is not Python, projectkit's read-only commands also answer in
-JSON (`projectkit doctor --json`).
-
-## Folder layout it will file into
-
-Experiment, then take, then camera, with the original filenames untouched.
-Two cameras of the same model write identical filenames, so the camera folder
-is what keeps them apart.
-
-```
-3_experiments/raw/20260212_hooper1_vertical-swimming/
-  take01/
-    cam-left/GX010001.MP4
-    cam-top/GX010001.MP4
-  take02/
-```
-
-A condition change makes a new experiment, never a new take, so the id burned
-into the footage by the slate can never go stale.
-
----
-
-## Roadmap
-
-Each stage is usable on its own, and each one is built only when real sessions
-show it is needed. The risk to manage is months spent on tooling instead of
-science.
-
-| Stage | Delivers |
-|---|---|
-| 0 | **Done.** This repo, the slate, the boundary and interface written down |
-| 1 | **Done.** `ingest --dry-run`: reports where each clip would be filed, copies nothing |
-| 2 | Real ingest: copy, verify hashes, write the capture block |
-| 3 | Session QC: every take decoded, every camera present, sync found at both ends, constant frame rate |
-| 4 | Rig configs: which cameras a setup uses, their labels, how they sync |
-| 5 | Bench app: plan → slate → record → ingest → QC, in one window, built on GUI-Modular-Widget-Library |
-| 6 | Live acquisition and hardware sync |
-
-The early stages need no GUI. The window comes once the steps under it have
-proven themselves.
-
-### Cameras in use
-
-| Camera | Records to | Identity | Sync |
-|---|---|---|---|
-| Lucid Triton (10GigE) | Capture software on a PC, often image sequences | What the capture code writes | Hardware trigger or PTP between Tritons; the visual slate across camera types |
-| Anker PowerConf C200 (USB-C) | Recording software on a PC | None in the file: one folder per webcam | Visual; force a fixed frame rate |
-| Nikon Z6 III | SD card | Model, probably serial | Visual, or audio |
-| Freefly Wave | SD card | `CAMERA.txt` card label | Visual; flicker matters at high frame rates |
-
----
-
-## Running the tests
-
-```bash
-uv run pytest
-```
-
-The ingest tests build fake cameras: short MP4s and folders of PNGs with slate
-codes drawn into chosen frames, so no hardware is needed. `tests/test_slate.py`
-and `tests/test_page_to_ingest.py` also need Node, and skip without it.
+- Documentation: the lab docs site, page *ExperimentManager* (README, algorithms and API)
+- What changed: [CHANGELOG.md](CHANGELOG.md)
+- Examples: [examples/](examples/)
+- Licence: [LICENSE](LICENSE)
+- Contact: Xu Lab, Parker McDonnell
+- Guide (setup, ingest in detail, labelling cameras, storage, camera temperatures, where it sits beside projectkit, the interface, the folder layout, the roadmap, the tests): [docs/guide.md](docs/guide.md)
+- The slate, and the format of its codes: [slate/README.md](slate/README.md)
+- Storage's design and every decision behind it: [docs/design/storage-sync.md](docs/design/storage-sync.md)
+- How each step works, with its sources: [docs/algorithms/](docs/algorithms/README.md)
+- Design rules and layout, for people and agents changing the code: [AGENTS.md](AGENTS.md)

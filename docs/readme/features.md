@@ -1,0 +1,7 @@
+- **A slate for every take**: one HTML page in a browser, held up to each camera. Its QR code names the experiment and take, so the footage carries its own identity through renamed files and mixed-up SD cards; its sync bar flips and numbers each flip, to line up cameras to the frame.
+- **Where would every clip go?** Point it at an SD card or a capture folder and it reads the slate in each clip's first or last 10 s, works out the camera from a `CAMERA.txt` label, and reports where each clip would be filed in the project. It never guesses: a clip with no slate, codes that disagree or a clash is listed as unsorted or a conflict, with the reason.
+- **Keep DaVis projects safe**: each project copied from C: to a work drive and on to a backup drive, one recording at a time, checksummed and safe to interrupt, waiting quietly for a drive to be plugged in.
+- **What is safe to delete from C:?** Only what both drives hold and the backup has been re-read in full; you delete it, in DaVis.
+- **See the copy and the drives**: what is where, the running copy's progress, free space on each drive over time and the days until it is full, a screen to leave open, pause and resume.
+- **Watch the rig on the way past**: quality control on new recordings and calibrations with every sync (through daviskit).
+- **Camera temperatures**: read straight from the cameras while DaVis is closed, logged over the warm-up, with the laser's temperatures and status by read-only queries.
