@@ -134,3 +134,11 @@ def snapshot(*roots: Path) -> dict:
             state[str(path)] = (path.is_dir(), stat.st_size if path.is_file() else 0,
                                 stat.st_mtime_ns)
     return state
+
+
+# The handbook's test evidence plugin (Lab-Code-Guide/tools/evidence.py, beside this repository).
+import sys as _sys
+from pathlib import Path as _Path
+
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[2] / "Lab-Code-Guide" / "tools"))
+pytest_plugins = ["evidence"]

@@ -8,3 +8,6 @@ dist/
 
 # per-machine state for the handbook whatsnew hook
 .claude/handbook-seen
+
+# Test captures when no notebook is found (Lab-Code-Guide/tools/evidence.py)
+.evidence/
