@@ -5,9 +5,9 @@ Shows `experimentkit.decode.find_codes` (two OpenCV detectors, two scales) and
 
 1. a slate code, a sync code, and a 4K frame (shrunk to 1280 px before decoding);
 2. a QR code that is not the slate's (rejected by the grammar, not guessed at);
-3. frames with both a foreign code and the slate in them -- the limit described in
-   docs/algorithms/find-codes.md: only one code is returned, and in one of the two
-   arrangements it is the foreign one, so that frame has "no slate".
+3. frames with both a foreign code and the slate in them: every code is collected,
+   so the slate is found whichever side the foreign code sits (until 2026-10-27 only
+   the first code read was returned, and one arrangement lost the slate).
 
 The symbols are drawn with OpenCV's own QR encoder (level M), not the slate
 page's JavaScript encoder, so this needs no Node. Synthetic data only; the
@@ -54,8 +54,8 @@ def frame(size: tuple[int, int], codes: list[tuple[str, int, int, int]], seed: i
 
 def report(name: str, image: np.ndarray, out: Path) -> None:
     cv2.imwrite(str(out / f"{name}.png"), image)
-    texts = find_codes(image)
-    parsed = parse(texts[0]) if texts else None
+    texts = find_codes(image, accept=lambda t: parse(t) is not None)
+    parsed = next((p for p in map(parse, texts) if p is not None), None)
     print(f"{name:<22} {image.shape[1]}x{image.shape[0]}  read={texts!r}")
     print(f"{'':<22} parsed={parsed}")
 
@@ -69,9 +69,7 @@ def main() -> None:
     report("sync", frame((1280, 720), [(sync, 8, 400, 100)]), out)
     report("slate_4k", frame((3840, 2160), [(slate, 20, 1200, 300)]), out)
     report("foreign_code", frame((1280, 720), [("https://example.com/label", 8, 400, 100)]), out)
-    # Both in one frame: which one OpenCV returns depends on where they sit. Here
-    # (checked 2026-10-20, cv2 4.14.0) the first arrangement returns the slate and
-    # the second the foreign code -- so that frame counts as having no slate.
+    # Both in one frame, in both arrangements: the slate is read either way.
     report("foreign_left_slate", frame((1280, 720), [("https://example.com/label", 7, 40, 100),
                                                      (slate, 7, 760, 100)]), out)
     report("slate_left_foreign", frame((1280, 720), [(slate, 7, 40, 100),

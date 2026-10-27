@@ -8,7 +8,7 @@ status: draft
 
 # Reading the slate out of a clip
 
-**Code:** `experimentkit/slate.py:read_slate` (line 121), `_search` (74),
+**Code:** `experimentkit/slate.py:read_slate` (line 125), `_search` (78),
 `SlateReading.identity` (52); the payload grammar `experimentkit/payload.py:parse` (45).
 
 **What it does.** Given one clip (a video file, or a folder of numbered images), searches only its
@@ -69,7 +69,7 @@ search(start, stop, where):
     for each Delta-th frame in [start, stop):
         image sequence: seek to it (a still costs the same anywhere)
         video:          read forward from start (seeking lands on keyframes)
-        codes <- [parse(t) for t in find_codes(frame)], dropping None
+        codes <- [parse(t) for t in find_codes(frame, accept = parses)], dropping None
         if codes: record sightings; seen <- true; quiet <- 0
         elif seen: quiet += 1; if quiet >= q: stop this window
 ```

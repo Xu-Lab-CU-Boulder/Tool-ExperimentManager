@@ -1,19 +1,22 @@
 ---
 title: Finding the slate's QR code in a frame
 code: experimentkit/decode.py:find_codes
-fingerprint: 29560fb89398ccb1
+fingerprint: bef7f44b7689f16d
 refs: [opencv_qrcodedetector, opencv_qrcodedetectoraruco]
 status: draft
 ---
 
 # Finding the slate's QR code in a frame
 
-**Code:** `experimentkit/decode.py:find_codes` (line 40), with `_shrink` (33) and `_get_detectors` (26).
+**Code:** `experimentkit/decode.py:find_codes` (line 72), with `_decode_all` (54), `_gray` (42),
+`_shrink` (35) and `_get_detectors` (28).
 
-**What it does.** Given one video frame (a NumPy image, BGR or grayscale, any size), returns the
-text of a QR code readable in it, as a one-element list, or `[]`. It tries two OpenCV detectors at
-two scales and stops at the first that reads anything. The text is not interpreted here
-(`payload.parse` does that; see [read-slate.md](read-slate.md)).
+**What it does.** Given one video frame (a NumPy image: grayscale, BGR or BGRA, any size), returns
+the text of every QR code readable in it, or `[]`; it never raises. It tries two OpenCV detectors
+at two scales, collecting every code each one sees, and stops at the first detector and scale that
+reads a code the caller's `accept` takes (any code when `accept` is None). `read_slate` passes
+"`payload.parse` accepts it", so a foreign code does not end the search. The text is not
+interpreted here (`payload.parse` does that; see [read-slate.md](read-slate.md)).
 
 ## Method
 
@@ -25,9 +28,11 @@ $$
 I_0 = \operatorname{shrink}(I, W_\max), \qquad I_1 = \operatorname{shrink}\!\left(I_0, \lfloor W_0/2 \rfloor\right)
 $$
 
-and for each candidate, in order, `cv2.QRCodeDetector().detectAndDecode` [opencv_qrcodedetector]
-then `cv2.QRCodeDetectorAruco().detectAndDecode` [opencv_qrcodedetectoraruco]. The first
-non-empty text is returned.
+and for each candidate, in order, `cv2.QRCodeDetector` [opencv_qrcodedetector] then
+`cv2.QRCodeDetectorAruco` [opencv_qrcodedetectoraruco], each with `detectAndDecodeMulti` (every
+code in the image) and, when that reads nothing, `detectAndDecode` (one code). Texts accumulate,
+without repeats, in the order read; the first detector and scale whose texts include an accepted
+one ends the search.
 
 **Ours:** $W_\max$ = 1280 px (a 4K frame is slow to search and gains nothing for a code filling a
 phone screen); the second scale of one half; the detector order. Why two of each: while testing the
@@ -40,15 +45,19 @@ described here.
 ## Steps
 
 ```text
-find_codes(image):
+find_codes(image, accept = None):
     if image empty: return []
-    gray <- image if 2-D else BGR -> gray
-    base <- gray shrunk to width <= 1280
+    gray <- image if 2-D, else its one channel, BGRA -> gray or BGR -> gray
+    base <- gray shrunk to width <= 1280                (any error -> return [])
+    seen <- []
     for candidate in (base, base shrunk to half width):
         for detector in (QRCodeDetector, QRCodeDetectorAruco):
-            text <- detector.detectAndDecode(candidate)   (cv2.error -> try the next)
-            if text: return [text]
-    return []
+            texts <- detector.detectAndDecodeMulti(candidate)
+            if texts empty: texts <- [detector.detectAndDecode(candidate)] if non-empty
+                                                     (cv2.error -> nothing read)
+            append each new text to seen
+            if any text in texts is accepted (or accept is None): return seen
+    return seen
 ```
 
 ## Sources
@@ -58,17 +67,12 @@ find_codes(image):
 
 ## Limits
 
-- **One code per frame, the first readable.** If another QR code is in the scene (a product
-  label, a poster) and a detector reads it first, `find_codes` returns that one and never looks
-  for the slate in that frame; `parse` then rejects it, and the frame counts as having no slate.
-  `detectAndDecodeMulti` would see both. Which code wins depends on where they sit, so a slate
-  moving in the hand may win in another sampled frame — but a foreign code fixed in the scene can
-  win in every frame, and the clip is then unsorted with "no slate found". Demonstrated in
-  `examples/slate_decode.py`: with the slate on the left and a URL code on the right,
-  `find_codes` returns the URL (cv2 4.14.0, 2026-10-20); swapped, it returns the slate.
-- **A 4-channel image** (BGRA) goes to `cvtColor(..., COLOR_BGR2GRAY)` outside the `try`, which
-  raises; the docstring's "never raises" holds only for 2-D and 3-channel images.
-  `read_slate` catches it and reports the clip as unreadable.
+- **Foreign codes cost time, not the slate.** Until 2026-10-27 only the first code read was
+  returned, so a foreign code (a label, a poster) could hide the slate: with the slate on the left
+  and a URL code on the right, the URL won (cv2 4.14.0, 2026-10-20). Every code is now collected,
+  and both arrangements read the slate (`examples/slate_decode.py`, `tests/test_decode.py`; cv2
+  4.14.0, 2026-10-27). A frame holding only a foreign code is searched at every detector and scale
+  before it returns, so it is the slowest kind of frame to decode.
 - **Small codes.** Shrinking a 4K frame to 1280 px divides module size by three; a code far from
   the camera may drop below what the detectors resolve, and the half-scale retry makes that worse,
   not better. A full-resolution try is not attempted.

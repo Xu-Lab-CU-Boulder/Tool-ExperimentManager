@@ -71,6 +71,10 @@ class SlateReading:
 QUIET_SECONDS = 2.0
 
 
+def _is_slate(text: str) -> bool:
+    return parse(text) is not None
+
+
 def _search(source, start: int, stop: int, step: int, where: str,
             reading: SlateReading, seekable_per_frame: bool,
             quiet_samples: int) -> None:
@@ -88,7 +92,7 @@ def _search(source, start: int, stop: int, step: int, where: str,
         """Record codes in one frame. Returns False when the search should end."""
         nonlocal seen, quiet
         found = False
-        for text in find_codes(image):
+        for text in find_codes(image, accept=_is_slate):
             code = parse(text)
             if code is not None:
                 reading.sightings.append(Sighting(code, where, index))

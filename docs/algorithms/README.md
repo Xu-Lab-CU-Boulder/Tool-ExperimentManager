@@ -20,7 +20,7 @@ file formats and libraries the code relies on.
 |---|---|---|
 | [slate-qr-encoder.md](slate-qr-encoder.md) | `slate/index.html` `QR.encode` | the page's own QR encoder: versions 1–10, Reed–Solomon, masks |
 | [slate-sync.md](slate-sync.md) | `slate/index.html` `step`; `slate.py:SlateReading.sync_range` | numbered black/white flips for lining cameras up (the aligning itself is not built) |
-| [find-codes.md](find-codes.md) | `experimentkit/decode.py:find_codes` | a QR code in one frame: two OpenCV detectors, two scales |
+| [find-codes.md](find-codes.md) | `experimentkit/decode.py:find_codes` | every QR code in one frame: two OpenCV detectors, two scales |
 | [read-slate.md](read-slate.md) | `experimentkit/slate.py:read_slate` | the slate in a clip: sampled head and tail windows, the payload grammar, one identity or none |
 | [clip-filing.md](clip-filing.md) | `experimentkit/ingest.py:plan_ingest` | where each clip would be filed, and file / already-filed / conflict / unsorted |
 
